@@ -44,7 +44,7 @@ export default function Index() {
             </p>
           )}
           <ul className="result-list">
-            {data.result.items.map((item: Checklist["items"][number]) => (
+            {data.result.items.map((item) => (
               <li key={item.line} className="result-item">
                 <input type="checkbox" checked={item.checked} readOnly />
                 <span>{item.text}</span>
