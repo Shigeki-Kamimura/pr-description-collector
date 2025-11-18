@@ -79,7 +79,7 @@ Make sure to deploy the output of `npm run build`
 
 ## Styling
 
-experience. You can use whatever CSS framework you prefer.
+This template does not include any styling by default, giving you full control over your application's look and feel. You can use whatever CSS framework you prefer.
 
 ---
 

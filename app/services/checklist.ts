@@ -12,6 +12,16 @@ export type Checklist = {
   checked: number;
 };
 
+/**
+ * CHECKBOX_RE 正規表現の各部分の説明:
+ *   ^\s*                : 行頭の空白（任意）
+ *   (?:[*-]|\d+\.)      : リストマーカー（* または - または 数字.）
+ *   \s*                 : マーカー後の空白（任意）
+ *   \[( |x|X)\]         : チェックボックス状態（[ ] または [x] または [X]）
+ *   \s*                 : チェックボックス後の空白（任意）
+ *   (.*)                : チェックボックス後のテキスト（任意の文字列）
+ *   $                   : 行末
+ */
 const CHECKBOX_RE = /^\s*(?:[*-]|\d+\.)\s*\[( |x|X)\]\s*(.*)$/;
 
 export function parseChecklist(input: string): Checklist {
