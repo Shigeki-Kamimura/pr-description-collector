@@ -12,7 +12,7 @@ export type Checklist = {
   checked: number;
 };
 
-const CHECKBOX_RE = /^\s*(?:[*-]|\d+\.)\s*\[( |x|X)\]\s+(.*)$/;
+const CHECKBOX_RE = /^\s*(?:[*-]|\d+\.)\s*\[( |x|X)\]\s*(.*)$/;
 
 export function parseChecklist(input: string): Checklist {
   const items: ChecklistItem[] = [];
@@ -35,6 +35,6 @@ export function summarize(checklist: Checklist) {
   return {
     total: checklist.total,
     checked: checklist.checked,
-    percent: checklist.total === 0 ? 0 : Math.round((checklist.checked / checklist.total) * 100),
+    percent: checklist.total === 0 ? 0 : Math.floor((checklist.checked / checklist.total) * 100),
   } as const;
 }
