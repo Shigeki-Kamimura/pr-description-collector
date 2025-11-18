@@ -12,7 +12,7 @@ export type Checklist = {
   checked: number;
 };
 
-const CHECKBOX_RE = /^(?:\s*[*-]|\s*\d+\.)\s*\[( |x|X)\]\s+(.*)$/;
+const CHECKBOX_RE = /^\s*(?:[*-]|\d+\.)\s*\[( |x|X)\]\s+(.*)$/;
 
 export function parseChecklist(input: string): Checklist {
   const items: ChecklistItem[] = [];
