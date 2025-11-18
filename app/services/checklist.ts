@@ -35,6 +35,7 @@ export function summarize(checklist: Checklist) {
   return {
     total: checklist.total,
     checked: checklist.checked,
-    percent: checklist.total === 0 ? 0 : Math.floor((checklist.checked / checklist.total) * 100),
+    // パーセンテージ計算をより明示的に（整数除算の誤解を防ぐ）
+    percent: checklist.total === 0 ? 0 : Math.floor((100 * checklist.checked) / checklist.total),
   } as const;
 }
