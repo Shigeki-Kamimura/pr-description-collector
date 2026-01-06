@@ -43,9 +43,22 @@ html, body {
   margin-bottom: 8px;
 }
 
-.textarea {
+/* Utilities */
+.basic-block {
+  display: block;
   width: 100%;
+}
+
+.textarea {
   min-height: 220px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.input-contents {
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -63,12 +76,15 @@ html, body {
   cursor: pointer;
 }
 
-.section { margin-top: 24px; }
-.section h2 { font-size: 18px; margin: 0 0 8px; }
+.fetch-section, .result-section { margin-top: 24px; }
+.fetch-section h2, .result-section h2 { font-size: 18px; margin: 0 0 8px; }
 .result-meta { font-size: 12px; color: #555; margin: 0 0 8px; }
 .result-list { list-style: disc; padding-left: 20px; display: grid; gap: 6px; }
 .result-item { display: flex; align-items: center; gap: 8px; }
 .result-line { font-size: 11px; color: var(--muted-2); }
+
+.error-text { color: #b91c1c; font-size: 12px; margin: 0; }
+.hint-text { color: var(--muted); font-size: 12px; margin: 0; }
 
 /* Error boundary minimal styling */
 .error-container { padding-top: 64px; }
