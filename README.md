@@ -15,6 +15,12 @@ A modern, production-ready template for building full-stack React applications u
 
 ## Getting Started
 
+## Environment Variables
+
+- GitHub: `GITHUB_TOKEN`（または `GITHUB_PAT` / `GITHUB_APP_*`）
+- OneDrive: `ONEDRIVE_ACCESS_TOKEN`（開発用・`/me/drive` を操作できるトークン）
+- 例: [.env.example](.env.example)
+
 ### Installation
 
 Install the dependencies:
