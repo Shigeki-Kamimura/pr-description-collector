@@ -3,21 +3,24 @@
  *
  * このルートはUIから呼び出されるサーバー側API（action）として動作し、
  * 指定された owner/repo/prNumber のPR情報をGitHub REST APIから取得して
- * 「PR本文（Markdown）」を返す。
+ * 「PR本文（Markdown）」および PRメタ/レビュー情報を返す。
  *
  * 目的:
  * - UI側の「Get Description」ボタンから、PR本文をtextareaへ流し込む
  * - 後続のチェックリスト抽出/Markdown→HTML化/OneDrive保存の入力元を統一する
+ * - レビュー（APPROVED有無など）をJSONで確認できるようにする
  *
  * 注意:
  * - 認証は現時点ではサーバー環境変数のトークン（GITHUB_TOKEN または GITHUB_PAT）前提
+ * - GitHubへのアクセス実装は services/github.server.ts（Octokit）に閉じ込める
  * - 画像DLやupload sessionは別Issueで対応（本ルートでは扱わない）
  */
 import type { ActionFunctionArgs } from "react-router";
 
 import {
-  createGitHubService,
+  createGitHubServiceFromEnv,
   type PullRequest,
+  type PullRequestReview,
   type PullRequestRef,
 } from "../services/github.server";
 
@@ -25,17 +28,15 @@ export type ApiCollectResponse =
   | {
       ok: true;
       pullRequest: PullRequest;
+      reviews: PullRequestReview[];
+      /** レビュー一覧に APPROVED が1件以上含まれるか（簡易判定） */
+      hasApproved: boolean;
       description: string;
     }
   | {
       ok: false;
       error: string;
     };
-
-function getGitHubToken(): string | null {
-  // まずはローカル/CIで動かしやすいように、2つの変数名を許容する。
-  return process.env.GITHUB_TOKEN ?? process.env.GITHUB_PAT ?? null;
-}
 
 export async function action({ request }: ActionFunctionArgs) {
   // フォームPOSTで受け取る（fetcher.submit からの送信もここに来る）
@@ -56,29 +57,22 @@ export async function action({ request }: ActionFunctionArgs) {
     );
   }
 
-  const token = getGitHubToken();
-  // サーバー側設定ミスは500扱い（クライアント入力起因ではない）
-  if (!token) {
-    return Response.json(
-      {
-        ok: false,
-        error:
-          "サーバ環境変数 GITHUB_TOKEN (または GITHUB_PAT) が未設定です",
-      } satisfies ApiCollectResponse,
-      { status: 500 },
-    );
-  }
-
   try {
-    // GitHub APIへアクセスし、PRメタ＋本文（Markdown）を取得
-    const github = createGitHubService({ token });
+    // GitHub APIへアクセスし、PRメタ＋本文（Markdown）＋レビューを取得
+    const github = await createGitHubServiceFromEnv();
     const ref: PullRequestRef = { repo: { owner, name: repo }, number: prNumber };
     const pullRequest = await github.getPullRequest(ref);
+    const reviews = await github.getPullRequestReviews(ref);
+
+    // UI/後続処理向けの簡易フラグ（厳密な「最新APPROVED」判定は後で強化してもよい）
+    const hasApproved = reviews.some((r) => r.state === "APPROVED");
 
     return Response.json(
       {
         ok: true,
         pullRequest,
+        reviews,
+        hasApproved,
         description: pullRequest.body,
       } satisfies ApiCollectResponse,
       { status: 200 },
