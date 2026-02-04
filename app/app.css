@@ -86,6 +86,47 @@ html, body {
 .error-text { color: #b91c1c; font-size: 12px; margin: 0; }
 .hint-text { color: var(--muted); font-size: 12px; margin: 0; }
 
+/* Rendered Markdown (minimal) */
+.markdown-view {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.markdown-view > :first-child { margin-top: 0; }
+.markdown-view > :last-child { margin-bottom: 0; }
+
+.markdown-view ul,
+.markdown-view ol {
+  padding-left: 22px;
+}
+
+.markdown-view pre {
+  overflow-x: auto;
+}
+
+.markdown-view code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+.markdown-view table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.markdown-view th,
+.markdown-view td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+}
+
+.markdown-view input[type="checkbox"] {
+  margin-right: 8px;
+}
+
 /* Error boundary minimal styling */
 .error-container { padding-top: 64px; }
 .code-block { width: 100%; padding: 16px; overflow-x: auto; background: #f8f8f8; border-radius: 6px; }

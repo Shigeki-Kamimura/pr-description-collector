@@ -1,6 +1,8 @@
 import type { ActionFunctionArgs } from "react-router";
 import { Form, useActionData, useFetcher } from "react-router";
 import { useEffect, useMemo, useState } from "react";
+import MarkdownIt from "markdown-it";
+import taskLists from "markdown-it-task-lists";
 import { parseChecklist, summarize, type Checklist } from "../services/checklist";
 import type { ApiCollectResponse } from "./api.collect";
 
@@ -61,6 +63,18 @@ export default function Index() {
       ? collectFetcher.data.error
       : null;
   }, [collectFetcher.data]);
+
+  const markdown = useMemo(() => {
+    // PR本文の表示は「読む」が主目的なので、HTML埋め込みは無効化して安全寄りにする。
+    // GitHubのtask list（- [ ] / - [x]）はプラグインでcheckboxへ変換する。
+    const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
+    md.use(taskLists, { enabled: true, label: true, labelAfter: true });
+    return md;
+  }, []);
+
+  const renderedDescriptionHtml = useMemo(() => {
+    return descriptionText ? markdown.render(descriptionText) : "";
+  }, [descriptionText, markdown]);
 
   return (
     <main className="container">
@@ -127,7 +141,7 @@ export default function Index() {
       <Form method="post" className="form">
         {/* 解析対象の本文（Markdown）。サーバactionでチェックリスト抽出する */}
         <label>
-          <span className="form-label">PR Description (Markdown)</span>
+          <span className="form-label">PR Description (Raw Markdown)</span>
           <textarea
             name="description"
             rows={10}
@@ -139,6 +153,19 @@ export default function Index() {
         </label>
         <button type="submit" className="btn">Parse Checklist</button>
       </Form>
+
+      <section className="result-section">
+        <h2>Description (Rendered)</h2>
+        {renderedDescriptionHtml ? (
+          <article
+            className="markdown-view"
+            // markdown-itで生成したHTMLを表示する（HTML埋め込みは無効化している）
+            dangerouslySetInnerHTML={{ __html: renderedDescriptionHtml }}
+          />
+        ) : (
+          <p className="hint-text">No description yet.</p>
+        )}
+      </section>
 
       {data?.result && (
         <section className="result-section">
