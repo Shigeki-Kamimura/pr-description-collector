@@ -47,8 +47,8 @@ export default function Index() {
   // 表示/解析対象のPR本文（Markdown）。
   // fetcherの取得結果があればそちらを優先し、なければactionの値を使う。
   const descriptionText = useMemo(() => {
-    if (data?.description != null) return data.description;
     if (collectFetcher.data?.ok) return collectFetcher.data.description;
+    if (data?.description != null) return data.description;
     return "";
   }, [collectFetcher.data, data?.description]);
 
