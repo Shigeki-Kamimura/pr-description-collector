@@ -66,6 +66,18 @@ html, body {
   line-height: 1.5;
 }
 
+/* ボタンラッパー、タイトルが表示されるのでその分の余白を確保 */
+.btn-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ボタン直下のメッセージ領域（出ても出なくても高さを一定にしてズレを防ぐ） */
+.btn-status {
+  min-height: 16px;
+}
+
 .btn {
   display: inline-block;
   padding: 8px 14px;
@@ -87,7 +99,7 @@ html, body {
 .hint-text { color: var(--muted); font-size: 12px; margin: 0; }
 
 /* Rendered Markdown (minimal) */
-.markdown-view {
+#markdown-view {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px;

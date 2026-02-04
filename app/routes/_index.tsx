@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { Form, useActionData, useFetcher } from "react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import { parseChecklist, summarize, type Checklist } from "../services/checklist";
@@ -11,7 +11,7 @@ import type { ApiCollectResponse } from "./api.collect";
  * この画面は仮です。後続IssueでUI強化予定。
  * この画面の責務:
  * - PR description（Markdown）の表示
- * - 「Get Description」でGitHubからPR本文を取得してtextareaへ反映する
+ * - 「Get Description」でGitHubからPR本文を取得して表示する
  * - 「Parse Checklist」でMarkdownのチェックリストを解析して表示する
  *
  * 設計メモ:
@@ -44,18 +44,13 @@ export default function Index() {
   const [repo, setRepo] = useState("");
   const [prNumber, setPrNumber] = useState("");
 
-  // textareaの中身（GitHub取得→反映、ユーザー編集→維持のためcontrolledにする）
-  const [descriptionText, setDescriptionText] = useState("");
-
-  useEffect(() => {
-    // actionの結果でdescriptionが返ってきたら textarea 側へ同期する
-    if (data?.description != null) setDescriptionText(data.description);
-  }, [data?.description]);
-
-  useEffect(() => {
-    // GitHub取得に成功したら textarea へ反映する
-    if (collectFetcher.data?.ok) setDescriptionText(collectFetcher.data.description);
-  }, [collectFetcher.data]);
+  // 表示/解析対象のPR本文（Markdown）。
+  // fetcherの取得結果があればそちらを優先し、なければactionの値を使う。
+  const descriptionText = useMemo(() => {
+    if (data?.description != null) return data.description;
+    if (collectFetcher.data?.ok) return collectFetcher.data.description;
+    return "";
+  }, [collectFetcher.data, data?.description]);
 
   const collectError = useMemo(() => {
     // fetcherの失敗レスポンスをUI表示向けに取り出す
@@ -114,51 +109,53 @@ export default function Index() {
               autoComplete="off"
             />
           </label>
+          <div className="btn-wrapper">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                // /api/collect へPOSTし、成功したら取得した description を表示/解析に使う
+                collectFetcher.submit(
+                  { owner, repo, prNumber },
+                  { method: "post", action: "/api/collect" },
+                );
+              }}
+              // 連打防止（通信中はdisabled）
+              disabled={collectFetcher.state !== "idle"}
+            >
+              Get Description
+            </button>
 
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              // /api/collect へPOSTし、成功したら上のuseEffectでtextareaに反映される
-              collectFetcher.submit(
-                { owner, repo, prNumber },
-                { method: "post", action: "/api/collect" },
-              );
-            }}
-            // 連打防止（通信中はdisabled）
-            disabled={collectFetcher.state !== "idle"}
-          >
-            Get Description
-          </button>
-
-          {collectError && <p className="error-text">{collectError}</p>}
-          {collectFetcher.data?.ok && (
-            <p className="hint-text">Fetched: {collectFetcher.data.pullRequest.title}</p>
-          )}
+            {/* メッセージ領域は常に確保して、表示/非表示でレイアウトがズレないようにする */}
+            <div className="btn-status" aria-live="polite">
+              {collectError ? (
+                <p className="error-text">{collectError}</p>
+              ) : collectFetcher.data?.ok ? (
+                <p className="hint-text">Fetched: {collectFetcher.data.pullRequest.title}</p>
+              ) : (
+                <p className="hint-text">&nbsp;</p>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 
       <Form method="post" className="form">
         {/* 解析対象の本文（Markdown）。サーバactionでチェックリスト抽出する */}
-        <label>
-          <span className="form-label">PR Description (Raw Markdown)</span>
-          <textarea
-            name="description"
-            rows={10}
-            value={descriptionText}
-            onChange={(e) => setDescriptionText(e.target.value)}
-            className="textarea basic-block"
-            placeholder="- [ ] Task A\n- [x] Task B"
-          />
-        </label>
-        <button type="submit" className="btn">Parse Checklist</button>
+        <input type="hidden" name="description" value={descriptionText} />
+        <button type="submit" className="btn" disabled={!descriptionText}>
+          Parse Checklist
+        </button>
+        {!descriptionText && (
+          <p className="hint-text">まず GitHub から description を取得してください。</p>
+        )}
       </Form>
 
       <section className="result-section">
         <h2>Description (Rendered)</h2>
         {renderedDescriptionHtml ? (
           <article
-            className="markdown-view"
+            id="markdown-view"
             // markdown-itで生成したHTMLを表示する（HTML埋め込みは無効化している）
             dangerouslySetInnerHTML={{ __html: renderedDescriptionHtml }}
           />
