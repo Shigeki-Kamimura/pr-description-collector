@@ -5,6 +5,7 @@ import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import { parseChecklist, summarize, type Checklist } from "../services/checklist";
 import type { ApiCollectResponse } from "./api.collect";
+import type { ApiOneDriveUploadResponse } from "./api.onedrive.upload";
 
 /**
  * ルート: /
@@ -39,6 +40,9 @@ export default function Index() {
   // GitHub取得用のfetcher（/api/collect にPOST）
   const collectFetcher = useFetcher<ApiCollectResponse>();
 
+  // OneDrive保存用のfetcher（/api/onedrive/upload にPOST）
+  const uploadFetcher = useFetcher<ApiOneDriveUploadResponse>();
+
   // GitHub参照（owner/repo/prNumber）
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
@@ -58,6 +62,12 @@ export default function Index() {
       ? collectFetcher.data.error
       : null;
   }, [collectFetcher.data]);
+
+  const uploadError = useMemo(() => {
+    return uploadFetcher.data && !uploadFetcher.data.ok
+      ? uploadFetcher.data.error
+      : null;
+  }, [uploadFetcher.data]);
 
   const markdown = useMemo(() => {
     // PR本文の表示は「読む」が主目的なので、HTML埋め込みは無効化して安全寄りにする。
@@ -132,6 +142,36 @@ export default function Index() {
                 <p className="error-text">{collectError}</p>
               ) : collectFetcher.data?.ok ? (
                 <p className="hint-text">Fetched: {collectFetcher.data.pullRequest.title}</p>
+              ) : (
+                <p className="hint-text">&nbsp;</p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                uploadFetcher.submit(
+                  { owner, repo, prNumber },
+                  { method: "post", action: "/api/onedrive/upload" },
+                );
+              }}
+              disabled={
+                uploadFetcher.state !== "idle" ||
+                collectFetcher.state !== "idle" ||
+                !collectFetcher.data?.ok
+              }
+            >
+              Save to OneDrive
+            </button>
+
+            <div className="btn-status" aria-live="polite">
+              {uploadError ? (
+                <p className="error-text">{uploadError}</p>
+              ) : uploadFetcher.data?.ok ? (
+                <p className="hint-text">
+                  Saved to: <a href={uploadFetcher.data.uploaded.descriptionMd.webUrl}>OneDrive</a>
+                </p>
               ) : (
                 <p className="hint-text">&nbsp;</p>
               )}
