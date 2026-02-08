@@ -62,7 +62,7 @@ export interface GitHubService {
   getPullRequest(ref: PullRequestRef): Promise<PullRequest>;
   /** PRレビュー一覧を取得 */
   getPullRequestReviews(ref: PullRequestRef): Promise<PullRequestReview[]>;
-  /** APPROVED が存在するか（最新APPROVEDがあるか） */
+  /** APPROVED レビューが1件以上存在するか（簡易判定。最新状態の厳密な判定ではない） */
   hasApprovedReview(ref: PullRequestRef): Promise<boolean>;
 }
 

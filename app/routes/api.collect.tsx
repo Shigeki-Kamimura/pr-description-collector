@@ -23,6 +23,8 @@ import {
   type PullRequestReview,
   type PullRequestRef,
 } from "../services/github.server";
+// OctokitのRequestErrorを使ってエラー判定
+import { RequestError } from "@octokit/request-error";
 
 export type ApiCollectResponse =
   | {
@@ -47,7 +49,10 @@ export async function action({ request }: ActionFunctionArgs) {
   const prNumber = Number(prNumberRaw);
 
   // 入力値の最低限バリデーション（不正入力は400で返す）
-  if (!owner || !repo || !Number.isFinite(prNumber) || prNumber <= 0) {
+  // owner/repo/prNumber はサーバー側で再取得するため必須
+  // prNumber は整数であることを確認
+  // 負の数や0はありえないので除外
+  if (!owner || !repo || !Number.isInteger(prNumber) || prNumber <= 0) {
     return Response.json(
       {
         ok: false,
@@ -78,7 +83,44 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
-    // upstream（GitHub）由来の失敗は502で返す（UI側で表示しやすいように文字列化）
+    // Octokit の RequestError からステータスコード別にユーザー向けメッセージを返す
+    if (error instanceof RequestError) {
+      const status = error.status;
+      switch (status) {
+        case 401:
+          return Response.json(
+            {
+              ok: false,
+              error: "GitHub認証に失敗しました。トークンを確認してください。",
+            },
+            { status: 401 },
+          );
+        case 403:
+          return Response.json(
+            {
+              ok: false,
+              error: "アクセスが拒否されました。権限またはレート制限を確認してください。",
+            },
+            { status: 403 },
+          );
+        case 404:
+          return Response.json(
+            {
+              ok: false,
+              error: "指定されたPRが見つかりません。owner/repo/prNumber を確認してください。",
+            },
+            { status: 404 },
+          );
+        default:
+          return Response.json(
+            {
+              ok: false,
+              error: `GitHub APIエラー (${status}): ${error.message}`,
+            },
+            { status: 502 },
+          );
+      }
+    }
     const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json(
       { ok: false, error: message } satisfies ApiCollectResponse,

@@ -105,37 +105,37 @@ html, body {
   padding: 12px;
 }
 
-.markdown-view > :first-child { margin-top: 0; }
-.markdown-view > :last-child { margin-bottom: 0; }
+#markdown-view > :first-child { margin-top: 0; }
+#markdown-view > :last-child { margin-bottom: 0; }
 
-.markdown-view ul,
-.markdown-view ol {
+#markdown-view ul,
+#markdown-view ol {
   padding-left: 22px;
 }
 
-.markdown-view pre {
+#markdown-view pre {
   overflow-x: auto;
 }
 
-.markdown-view code {
+#markdown-view code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
 }
 
-.markdown-view table {
+#markdown-view table {
   display: block;
   width: 100%;
   overflow-x: auto;
   border-collapse: collapse;
 }
 
-.markdown-view th,
-.markdown-view td {
+#markdown-view th,
+#markdown-view td {
   border: 1px solid var(--border);
   padding: 6px 8px;
 }
 
-.markdown-view input[type="checkbox"] {
+#markdown-view input[type="checkbox"] {
   margin-right: 8px;
 }
 
