@@ -10,7 +10,7 @@
 ## スコープ
 ### 対象範囲（In Scope）
 - Markdown のチェックリスト（`- [ ]` / `- [x]` / `* [ ]` / `1. [x]` など）を解析する。 
-- ブラウザでマークダウンファイルと同様の形でテキストが表示される 
+- ブラウザで Markdown ファイルと同様の見た目でテキストが表示される。 
 - レビュー完了後、保存ボタンを押すと PR description を JSON として保存し、画像と合わせて OneDrive に保存する。 
 - 入力は `Get Description` ボタン押下時に GitHub API 経由で取得する。取得対象は PR の JSON 本体。 
 - 入力フォームで `owner` / `repo` / `prNumber` を指定する。将来的に GitHub OAuth 採用時は `owner` の入力を変更する可能性がある。 
@@ -22,7 +22,7 @@
 
 ## 機能要件
 1. **チェックリスト解析**
-   - Json本体は GitHub API から取得する PR の JSON 本体。 
+   - JSON 本体は GitHub API から取得する PR の JSON 本体。 
    - PR description は JSON 内の Markdown 形式テキストを対象とする（`body`）。 
    - `- [ ]`, `- [x]`, `* [ ]`, `1. [x]` 形式のリスト項目を検出する。
    - `x` / `X` のチェックを完了として扱う。
@@ -36,15 +36,53 @@
    - `Get Description` 実行時に JSON 取得エラーが発生した場合は、ボタン直下にエラーメッセージを表示する。
    - エラーメッセージはレスポンスコードに応じて出し分ける（例: 400/401/403/404/429/500）。
    - PR description の下部に「チェックリスト項目」「エビデンス画像」「チェックリストの結果コメント」をカード形式でまとめて表示
-   - レスポンシブ対応(Android, iPhone, iPad mini, iPad, iPad pro, PC）
+   - 「チェックリストの結果コメント」は任意入力とし、レビュー補足が必要な場合のみ使用する。
+   - エビデンス画像の不備や動作テスト結果の相違に関するやり取りは、本アプリ内では行わない。
+   - 指摘や調整は PR のコメント / Slack で行い、本アプリの画面キャプチャを共有して伝達する運用を推奨する。
+   - レスポンシブ対応（Android, iPhone, iPad mini, iPad, iPad Pro, PC）
 
 3. **アーカイブ保存**
    - レビュー完了後のタイミングで、アーカイブ用 JSON（アプリ独自スキーマ）と画像を OneDrive に保存する。 
    - アーカイブ用 JSON には保存者の `login`（レビュアーか PL を想定）、保存日時（`archivedAt`、日本時間のシステム時刻）、PR description（`body`）、チェックリスト解析結果を含める。
+   - `archivedAt` は ISO 8601 形式（例: `2026-02-08T12:34:56+09:00`）で保存する。
    - アーカイブ用 JSON は PR JSON から必要なフィールドのみを抽出して生成する（生の PR JSON は保存しない）。
    - 画像は PR description 内の HTML `img` タグと Markdown 画像の両方をパースしダウンロードする。
    - 画像取得に失敗した場合はエラーメッセージを表示する。
-   - OneDrive の保存先フォルダは人力で「プロジェクト名/チェックリスト」を作成し、アプリ側ではフォルダ作成や最適化は行わない。
+   - 保存先のフォルダ構成は以下とする。
+   - JSON: `/<project>/pr/<prNumber>/<prTitle>/json/`
+   - 画像: `/<project>/pr/<prNumber>/<prTitle>/evidence-img/`
+   - ファイル名は最小限の固定名とし、JSON は `archive.json`、画像は `1.png` / `2.png` のように連番とする（拡張子は取得した画像に準拠）。
+   - 画像の再参照性を高めるため、アーカイブ用 JSON に画像の対応情報を含める（例: `evidenceImages` に `index` / `savedFilename` / `originalFilename` / `sourceUrl`）。
+   - 本アプリでのユーザー操作は「フォルダ作成」と「ファイル移動」のみとし、画像単体を閲覧する UI は提供しない。
+   - OneDrive ルートに一時保存して人力で移動する運用を想定する。自動化する場合はアプリ側でフォルダ作成と移動を行う（無ければ作成）。自動化の有無は設定で切り替え可能とする。
+   - アーカイブ用 JSON の最小スキーマ例（JSON）:
+     ```json
+     {
+       "prNumber": 1,
+       "prTitle": "PRtitle",
+       "repoOwner": "octo-org",
+       "repoName": "example-repo",
+       "prUrl": "https://github.com/octo-org/example-repo/pull/1",
+       "prAuthor": "octocat",
+       "reviewer": "reviewer1",
+       "archivedBy": "reviewer1",
+       "body": "PR description の本文...",
+       "archivedAt": "2026-02-08T12:34:56+09:00",
+       "archivedAtUtc": "2026-02-08T03:34:56Z"
+     }
+     ```
+   - 各項目の意味:
+     - `prNumber`: プルリクエスト番号
+     - `prTitle`: プルリクエストタイトル
+     - `repoOwner`: リポジトリの owner
+     - `repoName`: リポジトリ名
+     - `prUrl`: プルリクエストの URL
+     - `prAuthor`: プルリクエストを出したユーザー
+     - `reviewer`: レビュアー
+     - `archivedBy`: 保存したユーザー
+     - `body`: ディスクリプション本文
+     - `archivedAt`: 保存日時（日本時間）
+     - `archivedAtUtc`: 保存日時（UTC）
 
 ## 非機能要件
 - **速度**: 数十〜数百行程度の入力で即時に解析できる。 
@@ -83,13 +121,13 @@
   - 上記いずれのエラーケースでも、バックエンドはエラー内容（ステータスコードと簡潔な原因）をログに記録するが、UI には内部実装に依存する詳細は出さない。
 
 ### 出力
-- UI→プルリクエストの description、チェックリストとエビデンスのカード 
-- ファイル→OneDrive に保存する JSON と画像。 
+- UI → PR description、チェックリストとエビデンスのカード 
+- ファイル → OneDrive に保存する JSON と画像。 
 
 ## 受け入れ基準
 - レビュー完了後、PR description の JSON と画像が OneDrive に保存される。 
 
 ## 既存実装との対応
 - 解析処理は `Get Description` で行う。
-- チェックリストカードの表示は`Parse Checklist`
+- チェックリストカードの表示は `Parse Checklist`
 - `Index` ルートでフォーム入力と結果表示を行う。 
