@@ -23,7 +23,7 @@
 ## 機能要件
 1. **チェックリスト解析**
    - Json本体は GitHub API から取得する PR の JSON 本体。 
-   - description は JSON 内の Markdown 形式テキストを対象とする。 
+   - description は JSON 内の Markdown 形式テキストを対象とする（`description = body`）。 
    - `- [ ]`, `- [x]`, `* [ ]`, `1. [x]` 形式のリスト項目を検出する。
    - `x` / `X` のチェックを完了として扱う。
    - 各項目について以下を返す: 
@@ -38,8 +38,8 @@
 
 3. **アーカイブ保存**
    - レビュー完了後のタイミングで、PR description の JSON と画像を OneDrive に保存する。 
-   - 保存する JSON にはレビュアー/レビュイーの `login`、保存日時（`archivedAt`）、PR 本文（`body`）、チェックリスト解析結果を含める。
-   - 画像は PR description 内の HTML `img` タグをパースしダウンロードする（GitHub のチェックリストで付与したエビデンス画像を想定）。
+   - 保存する JSON には保存者の `login`（レビュアーか PL を想定）、保存日時（`archivedAt`）、PR 本文（`body`）、チェックリスト解析結果を含める。
+   - 画像は PR description 内の HTML `img` タグと Markdown 画像の両方をパースしダウンロードする。
    - OneDrive の保存先フォルダは人力で「プロジェクト名/チェックリスト」を作成し、アプリ側ではフォルダ作成や最適化は行わない。
 
 ## 非機能要件
@@ -51,6 +51,7 @@
 ## 入出力仕様
 ### 入力
 - 入力フォームで `owner` / `repo` / `prNumber` を受け取る。`Get Description` ボタン押下時に GitHub API から PR の JSON を取得する。 
+- 入力バリデーションは GitHub のリポジトリ入力ルールに準拠し、`prNumber` は数字のみを許容する。
 
 ### 出力
 - UI→プルリクエストのディスクリプション、チェックリストとエビデンスのカード 
