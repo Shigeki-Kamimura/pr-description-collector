@@ -19,10 +19,14 @@ import type { ActionFunctionArgs } from "react-router";
 
 import {
   createGitHubServiceFromEnv,
-  type PullRequest,
-  type PullRequestReview,
-  type PullRequestRef,
+  type PullRequest, // PR情報の型
+  type PullRequestReview, // PRレビュー情報の型
+  type PullRequestRef, // PR参照の型
 } from "../services/github.server";
+// PR のオーナー、リポジトリ名、PR番号の入力をバリデーションするユーティリティ
+import { validatePrRefInput } from "../services/validation"; 
+// OctokitのRequestErrorを使ってエラー判定
+import { RequestError } from "@octokit/request-error";
 
 export type ApiCollectResponse =
   | {
@@ -41,17 +45,12 @@ export type ApiCollectResponse =
 export async function action({ request }: ActionFunctionArgs) {
   // フォームPOSTで受け取る（fetcher.submit からの送信もここに来る）
   const formData = await request.formData();
-  const owner = String(formData.get("owner") ?? "").trim();
-  const repo = String(formData.get("repo") ?? "").trim();
-  const prNumberRaw = String(formData.get("prNumber") ?? "").trim();
-  const prNumber = Number(prNumberRaw);
-
-  // 入力値の最低限バリデーション（不正入力は400で返す）
-  if (!owner || !repo || !Number.isFinite(prNumber) || prNumber <= 0) {
+  const validation = validatePrRefInput(formData);
+  if (!validation.ok) {
     return Response.json(
       {
         ok: false,
-        error: "owner/repo/prNumber を正しく指定してください",
+        error: validation.error,
       } satisfies ApiCollectResponse,
       { status: 400 },
     );
@@ -60,7 +59,10 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     // GitHub APIへアクセスし、PRメタ＋本文（Markdown）＋レビューを取得
     const github = await createGitHubServiceFromEnv();
-    const ref: PullRequestRef = { repo: { owner, name: repo }, number: prNumber };
+    const ref: PullRequestRef = {
+      repo: { owner: validation.owner, name: validation.repo },
+      number: validation.prNumber,
+    };
     const pullRequest = await github.getPullRequest(ref);
     const reviews = await github.getPullRequestReviews(ref);
 
@@ -78,7 +80,37 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
-    // upstream（GitHub）由来の失敗は502で返す（UI側で表示しやすいように文字列化）
+    // Octokit の RequestError からステータスコード別にユーザー向けメッセージを返す
+    if (error instanceof RequestError) {
+      const status = error.status;
+      switch (status) {
+        case 401:
+          return Response.json(
+            { ok: false, error: "GitHub認証に失敗しました。トークンを確認してください。", },
+            { status: 401 },
+          );
+        case 403:
+          return Response.json(
+            { ok: false, error: "アクセスが拒否されました。権限またはレート制限を確認してください。", },
+            { status: 403 },
+          );
+        case 404:
+          return Response.json(
+            { ok: false, error: "指定されたPRが見つかりません。owner/repo/prNumber を確認してください。", },
+            { status: 404 },
+          );
+        case 429:
+          return Response.json(
+            { ok: false, error: "レート制限のため一時的に失敗しました。しばらくしてから再実行してください。", },
+            { status: 429 },
+          );
+        default:
+          return Response.json(
+            { ok: false, error: `GitHub APIエラー (${status}): ${error.message}`, },
+            { status: 502 },
+          );
+      }
+    }
     const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json(
       { ok: false, error: message } satisfies ApiCollectResponse,

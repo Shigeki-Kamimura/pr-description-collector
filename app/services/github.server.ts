@@ -10,6 +10,8 @@
  * - 呼び出し側は GitHubService 境界に依存し、後続の拡張（項目追加等）を容易にする
  */
 
+
+// Octokit本体とGitHub App認証をインポート
 import { Octokit } from "octokit";
 import { createAppAuth } from "@octokit/auth-app";
 
@@ -26,33 +28,34 @@ export type GitHubAppAuth = {
   /** GitHub App の Private Key（PEM）。改行込みの文字列 */
   privateKey: string;
 };
-
+// GitHubリポジトリの参照情報
 export type GitHubRepoRef = {
   owner: string;
   name: string;
 };
-
+// PR参照情報
 export type PullRequestRef = {
   repo: GitHubRepoRef;
   number: number;
 };
 
+// PR情報の型
 export type PullRequest = {
-  id: string;
-  number: number;
-  title: string;
+  id: string; // string化したID
+  number: number; // PR番号
+  title: string;// PRタイトル
   body: string; // PR本文（Markdown）
-  url: string;
+  url: string; // PRのHTML URL
 };
 
 export type PullRequestReviewState = "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
 
 export type PullRequestReview = {
-  id: string;
-  state: PullRequestReviewState;
-  submittedAt: string | null;
-  userLogin: string | null;
-  url: string | null;
+  id: string; // ID
+  state: PullRequestReviewState; // レビュー状態
+  submittedAt: string | null; // 提出日時（ISO 8601文字列）
+  userLogin: string | null; // レビュアーのユーザーログイン名
+  url: string | null; // レビューのHTML URL
 };
 
 export interface GitHubService {
@@ -62,7 +65,7 @@ export interface GitHubService {
   getPullRequest(ref: PullRequestRef): Promise<PullRequest>;
   /** PRレビュー一覧を取得 */
   getPullRequestReviews(ref: PullRequestRef): Promise<PullRequestReview[]>;
-  /** APPROVED が存在するか（最新APPROVEDがあるか） */
+  /** APPROVED レビューが1件以上存在するか（簡易判定。最新状態の厳密な判定ではない） */
   hasApprovedReview(ref: PullRequestRef): Promise<boolean>;
 }
 
@@ -125,28 +128,30 @@ export async function createGitHubServiceFromEnv(): Promise<GitHubService> {
 
 function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
   // Octokit生成手段（PAT/GitHub Appなど）を差し替え可能にするための薄いラッパー。
+  const getPullRequest = async (ref: PullRequestRef): Promise<PullRequest> => {
+    const { data } = await octokit.rest.pulls.get({
+      owner: ref.repo.owner,
+      repo: ref.repo.name,
+      pull_number: ref.number,
+    });
+    // Octokitの型をアプリ内型に変換して返す
+    return {
+      id: String(data.id),
+      number: data.number,
+      title: data.title,
+      body: data.body ?? "",
+      url: data.html_url ?? "",
+    };
+  };
+
   return {
-    async getPullRequest(ref: PullRequestRef): Promise<PullRequest> {
-      const { data } = await octokit.rest.pulls.get({
-        owner: ref.repo.owner,
-        repo: ref.repo.name,
-        pull_number: ref.number,
-      });
-
-      return {
-        id: String(data.id),
-        number: data.number,
-        title: data.title,
-        body: data.body ?? "",
-        url: data.html_url ?? "",
-      };
-    },
-
+    getPullRequest, // PRメタ情報を取得
+    // PR本文（Markdown）を取得
     async getPullRequestDescription(ref: PullRequestRef): Promise<string> {
-      const pr = await this.getPullRequest(ref);
+      const pr = await getPullRequest(ref);
       return pr.body;
     },
-
+    // PRレビュー一覧を取得
     async getPullRequestReviews(ref: PullRequestRef): Promise<PullRequestReview[]> {
       const { data } = await octokit.rest.pulls.listReviews({
         owner: ref.repo.owner,
@@ -154,7 +159,7 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
         pull_number: ref.number,
         per_page: 100,
       });
-
+      // Octokitの型をアプリ内型に変換して返す
       return data.map((review) => ({
         id: String(review.id),
         state: toReviewState(review.state),
@@ -163,7 +168,7 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
         url: review.html_url ?? null,
       }));
     },
-
+    // APPROVED レビューが1件以上存在するか（簡易判定。最新状態の厳密な判定ではない）
     async hasApprovedReview(ref: PullRequestRef): Promise<boolean> {
       const reviews = await this.getPullRequestReviews(ref);
       return reviews.some((r) => r.state === "APPROVED");
