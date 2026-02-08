@@ -89,7 +89,7 @@ export async function action({ request }: ActionFunctionArgs) {
             { status: 502 },
           );
       }
-  }
+    }
   const message = error instanceof Error ? error.message : "Unknown error";
   return Response.json(
     { ok: false, error: message },
