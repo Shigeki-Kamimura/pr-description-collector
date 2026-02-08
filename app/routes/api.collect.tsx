@@ -89,34 +89,22 @@ export async function action({ request }: ActionFunctionArgs) {
       switch (status) {
         case 401:
           return Response.json(
-            {
-              ok: false,
-              error: "GitHub認証に失敗しました。トークンを確認してください。",
-            },
+            { ok: false, error: "GitHub認証に失敗しました。トークンを確認してください。", },
             { status: 401 },
           );
         case 403:
           return Response.json(
-            {
-              ok: false,
-              error: "アクセスが拒否されました。権限またはレート制限を確認してください。",
-            },
+            { ok: false, error: "アクセスが拒否されました。権限またはレート制限を確認してください。", },
             { status: 403 },
           );
         case 404:
           return Response.json(
-            {
-              ok: false,
-              error: "指定されたPRが見つかりません。owner/repo/prNumber を確認してください。",
-            },
+            { ok: false, error: "指定されたPRが見つかりません。owner/repo/prNumber を確認してください。", },
             { status: 404 },
           );
         default:
           return Response.json(
-            {
-              ok: false,
-              error: `GitHub APIエラー (${status}): ${error.message}`,
-            },
+            { ok: false, error: `GitHub APIエラー (${status}): ${error.message}`, },
             { status: 502 },
           );
       }

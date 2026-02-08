@@ -90,11 +90,12 @@ export async function action({ request }: ActionFunctionArgs) {
           );
       }
     }
-  const message = error instanceof Error ? error.message : "Unknown error";
-  return Response.json(
-    { ok: false, error: message },
-    { status: 502 },
-  );
+
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return Response.json(
+      { ok: false, error: message },
+      { status: 502 },
+    );
   }
 }
 
