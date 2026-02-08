@@ -19,10 +19,12 @@ import type { ActionFunctionArgs } from "react-router";
 
 import {
   createGitHubServiceFromEnv,
-  type PullRequest,
-  type PullRequestReview,
-  type PullRequestRef,
+  type PullRequest, // PR情報の型
+  type PullRequestReview, // PRレビュー情報の型
+  type PullRequestRef, // PR参照の型
 } from "../services/github.server";
+// PR のオーナー、リポジトリ名、PR番号の入力をバリデーションするユーティリティ
+import { validatePrRefInput } from "../services/validation"; 
 // OctokitのRequestErrorを使ってエラー判定
 import { RequestError } from "@octokit/request-error";
 
@@ -43,20 +45,12 @@ export type ApiCollectResponse =
 export async function action({ request }: ActionFunctionArgs) {
   // フォームPOSTで受け取る（fetcher.submit からの送信もここに来る）
   const formData = await request.formData();
-  const owner = String(formData.get("owner") ?? "").trim();
-  const repo = String(formData.get("repo") ?? "").trim();
-  const prNumberRaw = String(formData.get("prNumber") ?? "").trim();
-  const prNumber = Number(prNumberRaw);
-
-  // 入力値の最低限バリデーション（不正入力は400で返す）
-  // owner/repo/prNumber はサーバー側で再取得するため必須
-  // prNumber は整数であることを確認
-  // 負の数や0はありえないので除外
-  if (!owner || !repo || !Number.isInteger(prNumber) || prNumber <= 0) {
+  const validation = validatePrRefInput(formData);
+  if (!validation.ok) {
     return Response.json(
       {
         ok: false,
-        error: "owner/repo/prNumber を正しく指定してください",
+        error: validation.error,
       } satisfies ApiCollectResponse,
       { status: 400 },
     );
@@ -65,7 +59,10 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     // GitHub APIへアクセスし、PRメタ＋本文（Markdown）＋レビューを取得
     const github = await createGitHubServiceFromEnv();
-    const ref: PullRequestRef = { repo: { owner, name: repo }, number: prNumber };
+    const ref: PullRequestRef = {
+      repo: { owner: validation.owner, name: validation.repo },
+      number: validation.prNumber,
+    };
     const pullRequest = await github.getPullRequest(ref);
     const reviews = await github.getPullRequestReviews(ref);
 

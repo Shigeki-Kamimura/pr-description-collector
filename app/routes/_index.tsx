@@ -9,6 +9,8 @@ import { parseChecklist, summarize, type Checklist } from "../services/checklist
 // GitHub APIサービスと型
 import type { ApiCollectResponse } from "./api.collect";
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
+// PR のオーナー、リポジトリ名、PR番号の入力をバリデーションするユーティリティ
+import { validatePrRefInput } from "../services/validation";
 // OctokitのRequestErrorを使ってエラー判定
 import { RequestError } from "@octokit/request-error";
 
@@ -35,18 +37,10 @@ type ActionData =
 export async function action({ request }: ActionFunctionArgs) {
   // owner/repo/prNumber からサーバー側でPR本文を取得して解析する。
   const formData = await request.formData();
-  const owner = String(formData.get("owner") ?? "").trim();
-  const repo = String(formData.get("repo") ?? "").trim();
-  const prNumberRaw = String(formData.get("prNumber") ?? "").trim();
-  const prNumber = Number(prNumberRaw);
-
-  // 最低限の入力チェック（サーバ側で再取得するため必須）
-  // owner/repo/prNumber はサーバー側で再取得するため必須
-  // prNumber は整数であることを確認
-  // 負の数や0はありえないので除外
-  if (!owner || !repo || !Number.isInteger(prNumber) || prNumber <= 0) {
+  const validation = validatePrRefInput(formData);
+  if (!validation.ok) {
     return Response.json(
-      { ok: false, error: "owner/repo/prNumber を正しく指定してください" } satisfies ActionData,
+      { ok: false, error: validation.error } satisfies ActionData,
       { status: 400 },
     );
   }
@@ -54,7 +48,10 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     // サーバ側でPR本文を取得して解析（大きな本文をフォームで送らない）
     const github = await createGitHubServiceFromEnv();
-    const ref: PullRequestRef = { repo: { owner, name: repo }, number: prNumber };
+    const ref: PullRequestRef = {
+      repo: { owner: validation.owner, name: validation.repo },
+      number: validation.prNumber,
+    };
     const pullRequest = await github.getPullRequest(ref);
     const description = pullRequest.body;
     const result = parseChecklist(description);
