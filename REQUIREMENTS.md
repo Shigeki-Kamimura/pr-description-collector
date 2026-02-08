@@ -39,9 +39,9 @@
    - レスポンシブ対応(Android, iPhone, iPad mini, iPad, iPad pro, PC）
 
 3. **アーカイブ保存**
-   - レビュー完了後のタイミングで、PR description の JSON と画像を OneDrive に保存する。 
-   - 保存する JSON には保存者の `login`（レビュアーか PL を想定）、保存日時（`archivedAt`、日本時間のシステム時刻）、PR description（`body`）、チェックリスト解析結果を含める。
-   - 保存する JSON は PR JSON から必要なフィールドのみを抽出して生成する。
+   - レビュー完了後のタイミングで、アーカイブ用 JSON（アプリ独自スキーマ）と画像を OneDrive に保存する。 
+   - アーカイブ用 JSON には保存者の `login`（レビュアーか PL を想定）、保存日時（`archivedAt`、日本時間のシステム時刻）、PR description（`body`）、チェックリスト解析結果を含める。
+   - アーカイブ用 JSON は PR JSON から必要なフィールドのみを抽出して生成する（生の PR JSON は保存しない）。
    - 画像は PR description 内の HTML `img` タグと Markdown 画像の両方をパースしダウンロードする。
    - 画像取得に失敗した場合はエラーメッセージを表示する。
    - OneDrive の保存先フォルダは人力で「プロジェクト名/チェックリスト」を作成し、アプリ側ではフォルダ作成や最適化は行わない。
