@@ -113,6 +113,7 @@ export default function Index() {
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [prNumber, setPrNumber] = useState("");
+  const [evidenceByLine, setEvidenceByLine] = useState<Record<number, string>>({});
 
   // 表示/解析対象のPR本文（Markdown）。
   // fetcherの取得結果があればそちらを優先し、なければactionの値を使う。
@@ -137,7 +138,8 @@ export default function Index() {
     // - task-lists プラグイン → <input type="checkbox"> と <label> のみ生成
     // 上記により dangerouslySetInnerHTML のXSSリスクは十分に低減されている。
     const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
-    md.use(taskLists, { enabled: true, label: true, labelAfter: true });
+    // enabled: false で checkbox を disabled にする
+    md.use(taskLists, { enabled: false, label: true, labelAfter: true });
     return md;
   }, []);
 
@@ -146,10 +148,10 @@ export default function Index() {
   }, [descriptionText, markdown]);
 
   return (
-    <main className="container">
-      <h1 className="page-title">PR Description Collector</h1>
+    <main id="main-content" className="container">
+      <h1 id="page-title" className="page-title">PR Description Collector</h1>
 
-      <section className="fetch-section">
+      <section id="fetch-section" className="fetch-section">
         <h2>Fetch from GitHub</h2>
         <div className="form">
           <label htmlFor="owner">
@@ -232,27 +234,31 @@ export default function Index() {
         ) : null}
       </Form>
 
-      <section className="result-section">
+      <section id="rendered-description-section" className="result-section">
         <h2>Description (Rendered)</h2>
         {renderedDescriptionHtml ? (
-          <article
-            // markdown-itで生成したHTMLを表示する（HTML埋め込みは無効化している）
-            // セキュリティ設計:
-            // - html: false → 生HTML(<script>等)はエスケープされる
-            // - markdown-it はデフォルトで javascript: スキームのリンクを無効化する
-            // - linkify: true → URLの自動リンク化のみ、XSSベクトルにはならない
-            // - task-lists プラグイン → <input type="checkbox"> と <label> のみ生成
-            // 上記により dangerouslySetInnerHTML のXSSリスクは十分に低減されている。
-            id="markdown-view"
-            dangerouslySetInnerHTML={{ __html: renderedDescriptionHtml }}
-          />
+          <details open>
+            <summary>Show description</summary>
+            <article
+              className="markdown-body"
+              // markdown-itで生成したHTMLを表示する（HTML埋め込みは無効化している）
+              // セキュリティ設計:
+              // - html: false → 生HTML(<script>等)はエスケープされる
+              // - markdown-it はデフォルトで javascript: スキームのリンクを無効化する
+              // - linkify: true → URLの自動リンク化のみ、XSSベクトルにはならない
+              // - task-lists プラグイン → <input type="checkbox"> と <label> のみ生成
+              // 上記により dangerouslySetInnerHTML のXSSリスクは十分に低減されている。
+              id="markdown-view"
+              dangerouslySetInnerHTML={{ __html: renderedDescriptionHtml }}
+            />
+          </details>
         ) : (
           <p className="hint-text">No description yet.</p>
         )}
       </section>
 
       {data && data.ok && (
-        <section className="result-section">
+        <section id="checklist-result-secition" className="result-section">
           <h2>Result</h2>
           {summary && (
             <p className="result-meta">
@@ -265,6 +271,16 @@ export default function Index() {
                 <input type="checkbox" checked={item.checked} readOnly />
                 <span>{item.text}</span>
                 <span className="result-line">(line {item.line})</span>
+                <input
+                  className="input-contents basic-block"
+                  type="text"
+                  placeholder="evidence URL or filename"
+                  value={evidenceByLine[item.line] ?? ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setEvidenceByLine((prev) => ({ ...prev, [item.line]: value }));
+                  }}
+                />
               </li>
             ))}
           </ul>

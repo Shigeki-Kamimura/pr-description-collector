@@ -139,6 +139,13 @@ html, body {
   margin-right: 8px;
 }
 
+/* チェックリスト表示セクション */
+#checklist-result-secition.result-section {
+  margin-top: 32px;
+  width: 80%;
+  max-width: 1080px;
+}
+
 /* Error boundary minimal styling */
 .error-container { padding-top: 64px; }
 .code-block { width: 100%; padding: 16px; overflow-x: auto; background: #f8f8f8; border-radius: 6px; }
