@@ -102,6 +102,11 @@ export async function action({ request }: ActionFunctionArgs) {
             { ok: false, error: "指定されたPRが見つかりません。owner/repo/prNumber を確認してください。", },
             { status: 404 },
           );
+        case 429:
+          return Response.json(
+            { ok: false, error: "レート制限のため一時的に失敗しました。しばらくしてから再実行してください。", },
+            { status: 429 },
+          );
         default:
           return Response.json(
             { ok: false, error: `GitHub APIエラー (${status}): ${error.message}`, },
