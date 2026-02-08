@@ -13,6 +13,7 @@
 - ブラウザでマークダウンファイルと同様の形でテキストが表示される 
 - レビュー完了後、保存ボタンを押すとPR description を JSON として保存し、画像と合わせて OneDrive に保存する。 
 - 入力は `Get Description` ボタン押下時に GitHub API 経由で取得する。取得対象は PR の JSON 本体。 
+- 入力フォームで `owner` / `repo` / `prNumber` を指定する。将来的に GitHub OAuth 採用時は `owner` の入力を変更する可能性がある。 
 
 ### 非対象範囲（Out of Scope）
 - PR API（GitHub/GitLab 等）との連携や自動取得。  
@@ -48,7 +49,7 @@
 
 ## 入出力仕様
 ### 入力
-- 入力は本アプリでは行わない。
+- 入力フォームで `owner` / `repo` / `prNumber` を受け取る。`Get Description` ボタン押下時に GitHub API から PR の JSON を取得する。 
 
 ### 出力
 - UI→プルリクエストのディスクリプション、チェックリストとエビデンスのカード 
