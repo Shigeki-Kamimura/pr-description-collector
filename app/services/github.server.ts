@@ -46,6 +46,7 @@ export type PullRequest = {
   title: string;// PRタイトル
   body: string; // PR本文（Markdown）
   url: string; // PRのHTML URL
+  authorLogin: string | null; // PR作成者
 };
 
 export type PullRequestReviewState = "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
@@ -141,6 +142,7 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
       title: data.title,
       body: data.body ?? "",
       url: data.html_url ?? "",
+      authorLogin: data.user?.login ?? null,
     };
   };
 

@@ -8,6 +8,9 @@ import taskLists from "markdown-it-task-lists";
 import { parseChecklist, summarize, type Checklist } from "../services/checklist";
 // GitHub APIサービスと型
 import type { ApiCollectResponse } from "./api.collect";
+// OneDrive APIサービスと型
+import type { ApiOneDriveUploadResponse } from "./api.onedrive.upload";
+// GitHubサービスのファクトリと型
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
 // PR のオーナー、リポジトリ名、PR番号の入力をバリデーションするユーティリティ
 import { validatePrRefInput } from "../services/validation";
@@ -248,7 +251,8 @@ export default function Index() {
                 <p className="error-text">{uploadError}</p>
               ) : uploadFetcher.data?.ok ? (
                 <p className="hint-text">
-                  Saved to: <a href={uploadFetcher.data.uploaded.descriptionMd.webUrl}>OneDrive</a>
+                  Saved to:{" "}
+                  <a href={uploadFetcher.data.uploaded.archiveJson.webUrl}>archive.json</a>
                 </p>
               ) : (
                 <p className="hint-text">&nbsp;</p>
