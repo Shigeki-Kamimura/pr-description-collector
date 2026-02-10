@@ -61,6 +61,9 @@ export async function action({ request }: ActionFunctionArgs) {
     // PR情報・レビュー情報取得
     const pullRequest = await github.getPullRequest(ref);
     const reviews = await github.getPullRequestReviews(ref);
+    // OneDriveの現在のユーザー情報取得
+    const currentUser = await onedrive.getCurrentUser();
+    // チェックリスト解析
     const checklist = parseChecklist(pullRequest.body);
 
     // 承認レビューのうち最新のものを取得
@@ -69,6 +72,11 @@ export async function action({ request }: ActionFunctionArgs) {
       .sort((a, b) => (a.submittedAt! < b.submittedAt! ? 1 : -1));
     const latestApproved = approvedReviews[0] ?? null;
     const reviewer = latestApproved?.userLogin ?? "UNKNOWN";
+    // アーカイブ実行者
+    const archivedBy =
+      currentUser.userPrincipalName ??
+      currentUser.displayName ??
+      "UNKNOWN";
 
     // OneDriveへ保存
     const now = new Date();
@@ -83,6 +91,7 @@ export async function action({ request }: ActionFunctionArgs) {
       /^\/+|\/+$/g,
       "",
     );
+    // フォルダ名に使うタイトルを整形
     const safeTitle = slugifyForPath(pullRequest.title) ?? "untitled";
     const rootPrefix = workFolder ? `${workFolder}/${baseFolder}` : baseFolder;
     const folderPath = `${rootPrefix}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
@@ -103,7 +112,7 @@ export async function action({ request }: ActionFunctionArgs) {
           prUrl: pullRequest.url,
           prAuthor: pullRequest.authorLogin ?? "UNKNOWN",
           reviewer,
-          archivedBy: reviewer,
+          archivedBy,
           body: pullRequest.body,
           archivedAt,
           archivedAtUtc,
@@ -129,7 +138,17 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    // エラーハンドリング
+    let message = error instanceof Error ? error.message : "Unknown error";
+    if ( 
+      // OneDrive の認証エラーと推測される場合、わかりやすいメッセージに変換
+      message.includes("OAuth token") ||
+      message.includes("認証") ||
+      message.includes("OneDrive API error (401)") || // 未認証
+      message.includes("OneDrive API error (403)")   // アクセス権限がない
+    ) {
+      message = "OneDrive 認証が切れています。再認証してから保存をやり直してください。";
+    }
     return Response.json(
       { ok: false, error: message } satisfies ApiOneDriveUploadResponse,
       { status: 502 },

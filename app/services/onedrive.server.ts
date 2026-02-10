@@ -23,13 +23,23 @@ export type DriveItem = {
   mimeType?: string;
 };
 
+// OneDriveのユーザー情報
+export type OneDriveUser = {
+  id: string;
+  displayName: string | null;
+  userPrincipalName: string | null;
+};
+
 export interface OneDriveService {
   /** 指定パスにテキストを保存（存在しなければ作成、あれば上書き） */
   saveText(path: string, content: string): Promise<DriveItem>;
   /** テキストを取得 */
   getText(path: string): Promise<string>;
+  /** 現在のユーザー情報を取得 */
+  getCurrentUser(): Promise<OneDriveUser>;
 }
 
+// OneDrive APIのエラーレスポンス
 type GraphErrorResponse = {
   error?: {
     code?: string;
@@ -37,15 +47,23 @@ type GraphErrorResponse = {
   };
 };
 
+// OneDrive APIのドライブアイテム情報
 type GraphDriveItem = {
-  id: string;
-  name: string;
-  webUrl?: string;
-  size?: number;
+  id: string; // itemId
+  name: string; // ファイル・フォルダ名
+  webUrl?: string; // Web表示用URL
+  size?: number; // バイト数
   file?: {
-    mimeType?: string;
+    mimeType?: string; // MIMEタイプ
   };
-  folder?: unknown;
+  folder?: unknown; // フォルダの場合に存在するフィールド
+};
+
+// OneDrive APIのユーザー情報
+type GraphUser = {
+  id: string;
+  displayName?: string | null;
+  userPrincipalName?: string | null;
 };
 
 function normalizeDrivePath(path: string) {
@@ -212,12 +230,23 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
     },
 
     async getText(path: string): Promise<string> {
+      // パス正規化とエンコード
       const normalized = normalizeDrivePath(path);
       if (!normalized) throw new Error("OneDrive getText: path is empty");
       const encoded = encodeDrivePath(normalized);
+      // コンテンツ取得
       return await graphText(auth.accessToken, `/me/drive/root:/${encoded}:/content`, {
         method: "GET",
       });
+    },
+
+    async getCurrentUser(): Promise<OneDriveUser> {
+      const user = await graphJson<GraphUser>(auth.accessToken, "/me", { method: "GET" });
+      return {
+        id: user.id,
+        displayName: user.displayName ?? null,
+        userPrincipalName: user.userPrincipalName ?? null,
+      };
     },
   };
 }
