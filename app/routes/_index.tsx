@@ -273,8 +273,12 @@ export default function Index() {
                   { method: "post", action: "/api/collect" },
                 );
               }}
-              // 連打防止（通信中はdisabled）
-              disabled={collectFetcher.state !== "idle"}
+              // disabled判定、owner/repo/prNumber が未入力、または他のfetcherが動作中の場合
+              disabled={
+                collectFetcher.state !== "idle" ||
+                uploadFetcher.state !== "idle" ||
+                !owner || !repo || !prNumber
+              }
             >
               Get Description
             </button>
@@ -282,10 +286,6 @@ export default function Index() {
             <a className="btn connect-one-drive-btn" href="/auth/onedrive/login">
               Connect OneDrive
             </a>
-
-            {collectFetcher.data?.ok ? (
-              <p>Fetched: {collectFetcher.data.pullRequest.title}</p>
-            ) : null}
 
             <button
               type="button"
@@ -337,6 +337,9 @@ export default function Index() {
 
       <section id="rendered-description-section" className="result-section">
         <h2>Description (Rendered)</h2>
+        {collectFetcher.data?.ok ? (
+          <p>Fetched Pullrequest Title: <span className="fetched-pr-title">{collectFetcher.data.pullRequest.title}</span></p>
+        ) : null}
         {renderedDescriptionHtml ? (
           <details open>
             <summary>Show description</summary>

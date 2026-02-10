@@ -101,6 +101,14 @@ html, body {
   color: #fff;
   border: none;
   cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  background: #9ca3af;
+  cursor: not-allowed;
+  opacity: 0.85;
 }
 
 .connect-one-drive-btn {
@@ -119,6 +127,10 @@ html, body {
 .result-list { list-style: disc; padding-left: 20px; display: grid; gap: 6px; }
 .result-item { display: flex; align-items: center; gap: 8px; }
 .result-line { font-size: 11px; color: var(--muted-2); }
+
+.fetched-pr-title {
+  font-weight: bolder;
+}
 
 
 /* Rendered Markdown (minimal) */
