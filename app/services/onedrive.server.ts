@@ -223,14 +223,15 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
 }
 
 /**
- * 環境変数から OneDriveService を作る（開発用）。
+ * 環境変数または OAuth から OneDriveService を作る（開発用）。
  */
-export function createOneDriveServiceFromEnv(): OneDriveService {
+export async function createOneDriveServiceFromEnv(): Promise<OneDriveService> {
   const accessToken = process.env.ONEDRIVE_ACCESS_TOKEN ?? "";
-  if (!accessToken) {
-    throw new Error(
-      "OneDrive認証情報が未設定です。ONEDRIVE_ACCESS_TOKEN を設定してください",
-    );
+  if (accessToken) {
+    return createOneDriveService({ accessToken });
   }
-  return createOneDriveService({ accessToken });
+
+  const { getAccessToken } = await import("./onedrive-auth.server");
+  const oauthToken = await getAccessToken();
+  return createOneDriveService({ accessToken: oauthToken });
 }

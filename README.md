@@ -19,6 +19,8 @@ A modern, production-ready template for building full-stack React applications u
 
 - GitHub: `GITHUB_TOKEN`（または `GITHUB_PAT` / `GITHUB_APP_*`）
 - OneDrive: `ONEDRIVE_ACCESS_TOKEN`（開発用・`/me/drive` を操作できるトークン）
+- OneDrive OAuth（サーバーサイド）: `ONEDRIVE_TENANT` / `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` / `ONEDRIVE_REDIRECT_URI`
+- OneDrive 保存先: `ONEDRIVE_BASE_FOLDER`（任意）/ `ONEDRIVE_WORK_FOLDER`（任意）
 - 例: [.env.example](.env.example)
 
 ### Installation

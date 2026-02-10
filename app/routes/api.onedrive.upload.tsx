@@ -52,7 +52,7 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     // サービス初期化
     const github = await createGitHubServiceFromEnv();
-    const onedrive = createOneDriveServiceFromEnv();
+    const onedrive = await createOneDriveServiceFromEnv();
     // PR情報取得
     const ref: PullRequestRef = {
       repo: { owner, name: repo },
@@ -75,11 +75,17 @@ export async function action({ request }: ActionFunctionArgs) {
     const archivedAtUtc = now.toISOString();
     const archivedAt = formatIsoWithOffset(now, 9 * 60);
     // フォルダパス例: pr-description-collector/owner/repo/pr-123
-    const baseFolder = (process.env.ONEDRIVE_BASE_FOLDER ?? "pr-description-collector").replace(
+    const baseFolder = (process.env.ONEDRIVE_BASE_FOLDER ?? "project").replace(
       /^\/+|\/+$/g,
       "",
     );
-    const folderPath = `${baseFolder}/${owner}/${repo}/pr-${prNumber}`;
+    const workFolder = (process.env.ONEDRIVE_WORK_FOLDER ?? "").replace(
+      /^\/+|\/+$/g,
+      "",
+    );
+    const safeTitle = slugifyForPath(pullRequest.title) ?? "untitled";
+    const rootPrefix = workFolder ? `${workFolder}/${baseFolder}` : baseFolder;
+    const folderPath = `${rootPrefix}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
     // description.md 保存
     const descriptionMd = await onedrive.saveText(
       `${folderPath}/description.md`,
@@ -145,4 +151,16 @@ function formatIsoWithOffset(date: Date, offsetMinutes: number): string {
   const offsetHours = String(Math.floor(abs / 60)).padStart(2, "0");
   const offsetMins = String(abs % 60).padStart(2, "0");
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}${sign}${offsetHours}:${offsetMins}`;
+}
+
+function slugifyForPath(value: string): string {
+  const normalized = value
+    .normalize("NFKD")
+    .replace(/[^\w\s.-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+
+  return normalized.slice(0, 80);
 }

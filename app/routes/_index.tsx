@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
-import { Form, useActionData, useFetcher } from "react-router";
-import { useMemo, useState } from "react";
+import { Form, useActionData, useFetcher, useSearchParams } from "react-router";
+import { useEffect, useMemo, useState } from "react";
 // Markdown-it本体とタスクリストプラグイン
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
@@ -15,7 +15,12 @@ import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/git
 // PR のオーナー、リポジトリ名、PR番号の入力をバリデーションするユーティリティ
 import { validatePrRefInput } from "../services/validation";
 // OctokitのRequestErrorを使ってエラー判定
-import { RequestError } from "@octokit/request-error";
+
+// ダイアログコンポーネント群
+import { RequestError } from "@octokit/request-error"; // エラー
+import { OneDriveAuthDialog } from "../components/OneDriveAuthDialog"; // OneDrive認証完了
+import { SaveErrorDialog } from "../components/SaveErrorDialog"; // 保存エラー
+import { SuccessDialog } from "../components/SuccessDialog"; // 保存成功
 
 /**
  * ルート: /
@@ -116,10 +121,14 @@ export default function Index() {
   const uploadFetcher = useFetcher<ApiOneDriveUploadResponse>();
 
   // GitHub参照（owner/repo/prNumber）
+  // これらはフォームの入力値としても使うが、fetcherのsubmitで直接渡すこともあるため、状態として管理する。
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [prNumber, setPrNumber] = useState("");
+  // URLの入力値を line 番号に紐づけて管理する状態
   const [evidenceByLine, setEvidenceByLine] = useState<Record<number, string>>({});
+  // owner/repo/prNumber の入力エラー注釈表示フラグ
+  const [showPrRefAnnotation, setShowPrRefAnnotation] = useState(false);
 
   // 表示/解析対象のPR本文（Markdown）。
   // fetcherの取得結果があればそちらを優先し、なければactionの値を使う。
@@ -142,6 +151,41 @@ export default function Index() {
       : null;
   }, [uploadFetcher.data]);
 
+  // OneDrive OAuth接続状態
+  // クエリパラメータを操作するためのフック
+  const [searchParams, setSearchParams] = useSearchParams();
+  // OneDrive接続完了のクエリパラメータを検出するフラグ
+  const onedriveConnected = searchParams.get("onedrive") === "connected";
+  // 認証エラーかどうかのフラグ
+  const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false);
+  // 保存エラー表示のフラグとメッセージ
+  const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false);
+  // 保存成功表示のフラグ
+  const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
+  // アップロードエラーメッセージから認証エラーかどうかを判定する（簡易的にキーワードマッチ）
+  const uploadErrorMessage = uploadError ?? "";
+  const isAuthError = /OAuth token|認証|401|403/.test(uploadErrorMessage);
+
+  // アップロードエラー発生時にダイアログを開く
+  useEffect(() => {
+    if (uploadError) setIsErrorDialogOpen(true);
+  }, [uploadError]);
+
+  // アップロード成功時にダイアログを開く
+  useEffect(() => {
+    if (uploadFetcher.data?.ok) setIsSuccessDialogOpen(true);
+  }, [uploadFetcher.data]);
+
+  // OneDrive接続完了クエリパラメータを削除
+  useEffect(() => {
+    if (!onedriveConnected) return;
+    setIsAuthDialogOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("onedrive");
+    setSearchParams(next, { replace: true });
+  }, [onedriveConnected, searchParams, setSearchParams]);
+
+  // Markdown-it インスタンス（タスクリストプラグイン有効化）
   const markdown = useMemo(() => {
     // セキュリティ設計:
     // - html: false → 生HTML(<script>等)はエスケープされる
@@ -165,6 +209,18 @@ export default function Index() {
 
       <section id="fetch-section" className="fetch-section">
         <h2>Fetch from GitHub</h2>
+        {/* 注釈エリア */}
+        <div className="annotation-wrapper" aria-live="polite">
+ 
+          {!collectFetcher.data?.ok ? (
+            // 最初から表示しておく
+            <p className="annotation-text">Get Description を押してから保存してください。</p>
+          ) : null}
+          {showPrRefAnnotation ? (
+            // 入力エラー注釈
+            <p className="annotation-text-small">owner/repo/prNumber を正しく指定してください。</p>
+          ) : null}
+        </div>
         <div className="form">
           <label htmlFor="owner">
             <span className="form-label">owner</span>
@@ -204,7 +260,13 @@ export default function Index() {
             <button
               type="button"
               className="btn"
+              // owner/repo/prNumber をフォームの状態から直接渡す（URLにするのではなく）ことで、入力エラーがあっても正しい値だけを送ることができる。
               onClick={() => {
+                if (!owner || !repo || !prNumber) {
+                  setShowPrRefAnnotation(true);
+                } else {
+                  setShowPrRefAnnotation(false);
+                }
                 // /api/collect へPOSTし、成功したら取得した description を表示/解析に使う
                 collectFetcher.submit(
                   { owner, repo, prNumber },
@@ -216,22 +278,25 @@ export default function Index() {
             >
               Get Description
             </button>
+              {/* OneDrive OAuthログインへのリンク */}
+            <a className="btn connect-one-drive-btn" href="/auth/onedrive/login">
+              Connect OneDrive
+            </a>
 
-            {/* メッセージ領域は常に確保して、表示/非表示でレイアウトがズレないようにする */}
-            <div className="btn-status" aria-live="polite">
-              {collectError ? (
-                <p className="error-text">{collectError}</p>
-              ) : collectFetcher.data?.ok ? (
-                <p className="hint-text">Fetched: {collectFetcher.data.pullRequest.title}</p>
-              ) : (
-                <p className="hint-text">&nbsp;</p>
-              )}
-            </div>
+            {collectFetcher.data?.ok ? (
+              <p>Fetched: {collectFetcher.data.pullRequest.title}</p>
+            ) : null}
 
             <button
               type="button"
               className="btn"
               onClick={() => {
+                if (!owner || !repo || !prNumber) {
+                  setShowPrRefAnnotation(true);
+                } else {
+                  setShowPrRefAnnotation(false);
+                }
+                // /api/onedrive/upload へPOSTし、OneDriveへ保存を実行する
                 uploadFetcher.submit(
                   { owner, repo, prNumber },
                   { method: "post", action: "/api/onedrive/upload" },
@@ -246,36 +311,29 @@ export default function Index() {
               Save to OneDrive
             </button>
 
-            <div className="btn-status" aria-live="polite">
-              {uploadError ? (
-                <p className="error-text">{uploadError}</p>
-              ) : uploadFetcher.data?.ok ? (
-                <p className="hint-text">
-                  Saved to:{" "}
-                  <a href={uploadFetcher.data.uploaded.archiveJson.webUrl}>archive.json</a>
-                </p>
-              ) : (
-                <p className="hint-text">&nbsp;</p>
-              )}
-            </div>
+            <Form method="post" className="form">
+              {/* 解析対象はサーバー側で再取得するため、PR参照情報だけ渡す */}
+              <input type="hidden" name="owner" value={owner} />
+              <input type="hidden" name="repo" value={repo} />
+              <input type="hidden" name="prNumber" value={prNumber} />
+              <button
+                type="submit"
+                className="btn"
+                disabled={!owner || !repo || !prNumber}
+                onClick={() => {
+                  if (!owner || !repo || !prNumber) {
+                    setShowPrRefAnnotation(true);
+                  } else {
+                    setShowPrRefAnnotation(false);
+                  }
+                }}
+              >
+                Parse Checklist
+              </button>
+            </Form>
           </div>
         </div>
       </section>
-
-      <Form method="post" className="form">
-        {/* 解析対象はサーバー側で再取得するため、PR参照情報だけ渡す */}
-        <input type="hidden" name="owner" value={owner} />
-        <input type="hidden" name="repo" value={repo} />
-        <input type="hidden" name="prNumber" value={prNumber} />
-        <button type="submit" className="btn" disabled={!owner || !repo || !prNumber}>
-          Parse Checklist
-        </button>
-        {!owner || !repo || !prNumber ? (
-          <p className="hint-text">owner/repo/prNumber を入力してください。</p>
-        ) : data && !data.ok ? (
-          <p className="error-text">{data.error}</p>
-        ) : null}
-      </Form>
 
       <section id="rendered-description-section" className="result-section">
         <h2>Description (Rendered)</h2>
@@ -296,7 +354,7 @@ export default function Index() {
             />
           </details>
         ) : (
-          <p className="hint-text">No description yet.</p>
+          <p>No description yet.</p>
         )}
       </section>
 
@@ -329,6 +387,22 @@ export default function Index() {
           </ul>
         </section>
       )}
+      {/* oAuth接続確認通知ダイアログ */}
+      <OneDriveAuthDialog
+        open={isAuthDialogOpen}
+        onClose={() => setIsAuthDialogOpen(false)}
+      />
+      {/* 保存エラーダイアログ */}
+      <SaveErrorDialog
+        open={isErrorDialogOpen}
+        onClose={() => setIsErrorDialogOpen(false)}
+        error={uploadError ?? ""}
+        isAuthError={isAuthError}
+      />
+      <SuccessDialog
+        open={isSuccessDialogOpen}
+        onClose={() => setIsSuccessDialogOpen(false)}
+      />
     </main>
   );
 }
