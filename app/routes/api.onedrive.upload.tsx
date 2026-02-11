@@ -202,11 +202,12 @@ function formatIsoWithOffset(date: Date, offsetMinutes: number): string {
 function slugifyForPath(value: string): string {
   const normalized = value
     .normalize("NFKD")
-    .replace(/[^\w\s.-]/g, "")
+    // OneDrive/Windowsで使えない文字のみ除外し、日本語などは保持する
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
     .trim()
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^[-.]+|[-.]+$/g, "");
+    .replace(/^[-.\s]+|[-.\s]+$/g, "");
 
   return normalized.slice(0, 80);
 }
