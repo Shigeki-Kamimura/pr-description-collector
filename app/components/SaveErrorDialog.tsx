@@ -40,7 +40,7 @@ export function SaveErrorDialog({ open, onClose, error, isAuthError }: SaveError
         </h2>
         <p className="dialog-text">
           {isAuthError
-            ? "認証が切れている可能性があります。再認証してから保存をやり直してください。"
+            ? `${error}\n再認証してから保存をやり直してください。解決しない場合は管理者にお問い合わせください。`
             : error}
         </p>
         <div className="dialog-actions">

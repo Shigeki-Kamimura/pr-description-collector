@@ -6,8 +6,10 @@
 // OAuth認可コードを受け取り、アクセストークンを取得して保存する
 import { redirect } from "react-router";
 import {
-  exchangeCodeForToken,
-  onedriveOAuthStateCookie,
+  exchangeCodeForToken, // OneDrive OAuthトークン交換
+  onedriveOAuthStateCookie, // OAuth状態管理用Cookie
+  onedriveOAuthSessionCookie, // OAuthセッションID保持用Cookie
+  storeTokenForSession, // セッションIDに対応するトークンを保存する
 } from "../services/onedrive-auth.server";
 
 // コールバックURLのローダー
@@ -17,10 +19,13 @@ export async function loader({ request }: { request: Request }) {
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
   const errorDescription = url.searchParams.get("error_description");
+  const errorCodes = url.searchParams.get("error_codes");
 
   if (error) {
     return new Response(
-      `OneDrive OAuth error: ${error}${errorDescription ? ` (${errorDescription})` : ""}`,
+      `OneDrive OAuth error: ${error}${errorDescription ? ` (${errorDescription})` : ""}${
+        errorCodes ? ` [codes: ${errorCodes}]` : ""
+      }`,
       { status: 400 },
     );
   }
@@ -35,10 +40,19 @@ export async function loader({ request }: { request: Request }) {
   }
 
   // コードをトークンに交換
-  await exchangeCodeForToken(code);
+  let tokenCache: Awaited<ReturnType<typeof exchangeCodeForToken>>;
+  try {
+    tokenCache = await exchangeCodeForToken(code);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return new Response(`OneDrive OAuth token error: ${message}`, { status: 500 });
+  }
+  const sessionId = crypto.randomUUID();
+  storeTokenForSession(sessionId, tokenCache);
 
   // stateクッキーをクリアしてリダイレクト
   const headers = new Headers();
   headers.append("Set-Cookie", await onedriveOAuthStateCookie.serialize("", { maxAge: 0 }));
+  headers.append("Set-Cookie", await onedriveOAuthSessionCookie.serialize(sessionId));
   return redirect("/?onedrive=connected", { headers });
 }

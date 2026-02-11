@@ -10,6 +10,8 @@ import { parseChecklist, summarize, type Checklist } from "../services/checklist
 import type { ApiCollectResponse } from "./api.collect";
 // OneDrive APIサービスと型
 import type { ApiOneDriveUploadResponse } from "./api.onedrive.upload";
+// OneDriveセッション確認APIの型
+import type { ApiOneDriveSessionStatusResponse } from "./api.onedrive.session-status";
 // GitHubサービスのファクトリと型
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
 // PR のオーナー、リポジトリ名、PR番号の入力をバリデーションするユーティリティ
@@ -119,6 +121,8 @@ export default function Index() {
 
   // OneDrive保存用のfetcher（/api/onedrive/upload にPOST）
   const uploadFetcher = useFetcher<ApiOneDriveUploadResponse>();
+  // OneDriveセッション確認用のfetcher（/api/onedrive/session-status にGET）
+  const sessionStatusFetcher = useFetcher<ApiOneDriveSessionStatusResponse>();
 
   // GitHub参照（owner/repo/prNumber）
   // これらはフォームの入力値としても使うが、fetcherのsubmitで直接渡すこともあるため、状態として管理する。
@@ -129,6 +133,10 @@ export default function Index() {
   const [evidenceByLine, setEvidenceByLine] = useState<Record<number, string>>({});
   // owner/repo/prNumber の入力エラー注釈表示フラグ
   const [showPrRefAnnotation, setShowPrRefAnnotation] = useState(false);
+  // 取得エラー注釈表示フラグ
+  const [showCollectErrorAnnotation, setShowCollectErrorAnnotation] = useState(false);
+  // 解析エラー注釈表示フラグ
+  const [showParseErrorAnnotation, setShowParseErrorAnnotation] = useState(false);
 
   // 表示/解析対象のPR本文（Markdown）。
   // fetcherの取得結果があればそちらを優先し、なければactionの値を使う。
@@ -138,6 +146,29 @@ export default function Index() {
     return "";
   }, [collectFetcher.data, data]);
 
+  // 入力値を一時保存して OAuth 復帰後に復元する
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.sessionStorage.getItem("pr-ref"); // { owner, repo, prNumber }
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { owner?: string; repo?: string; prNumber?: string };
+      if (!owner && saved.owner) setOwner(saved.owner); // 現在の入力値が空の場合のみ復元
+      if (!repo && saved.repo) setRepo(saved.repo); // 同上
+      if (!prNumber && saved.prNumber) setPrNumber(saved.prNumber); // 同上
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 入力値が変わるたびに保存する
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payload = JSON.stringify({ owner, repo, prNumber });
+    window.sessionStorage.setItem("pr-ref", payload);
+  }, [owner, repo, prNumber]);
+
   const collectError = useMemo(() => {
     // fetcherの失敗レスポンスをUI表示向けに取り出す
     return collectFetcher.data && !collectFetcher.data.ok
@@ -145,17 +176,27 @@ export default function Index() {
       : null;
   }, [collectFetcher.data]);
 
+  // OneDriveアップロードエラーメッセージ
   const uploadError = useMemo(() => {
     return uploadFetcher.data && !uploadFetcher.data.ok
       ? uploadFetcher.data.error
       : null;
   }, [uploadFetcher.data]);
 
+  // OneDriveセッション確認エラーメッセージ
+  const sessionStatusError = useMemo(() => {
+    return sessionStatusFetcher.data && !sessionStatusFetcher.data.ok
+      ? sessionStatusFetcher.data.error
+      : null;
+  }, [sessionStatusFetcher.data]);
+
   // OneDrive OAuth接続状態
   // クエリパラメータを操作するためのフック
   const [searchParams, setSearchParams] = useSearchParams();
   // OneDrive接続完了のクエリパラメータを検出するフラグ
   const onedriveConnected = searchParams.get("onedrive") === "connected";
+  // OAuth復帰直後のセッション確認フロー中かどうか
+  const [isCheckingOneDriveSession, setIsCheckingOneDriveSession] = useState(false);
   // 認証エラーかどうかのフラグ
   const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false);
   // 保存エラー表示のフラグとメッセージ
@@ -163,13 +204,32 @@ export default function Index() {
   // 保存成功表示のフラグ
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
   // アップロードエラーメッセージから認証エラーかどうかを判定する（簡易的にキーワードマッチ）
-  const uploadErrorMessage = uploadError ?? "";
+  const effectiveError = uploadError ?? sessionStatusError;
+  const uploadErrorMessage = effectiveError ?? "";
   const isAuthError = /OAuth token|認証|401|403/.test(uploadErrorMessage);
 
   // アップロードエラー発生時にダイアログを開く
   useEffect(() => {
-    if (uploadError) setIsErrorDialogOpen(true);
-  }, [uploadError]);
+    if (effectiveError) setIsErrorDialogOpen(true);
+  }, [effectiveError]);
+
+  // 取得エラー注釈の表示制御
+  useEffect(() => {
+    if (collectError) {
+      setShowCollectErrorAnnotation(true); // エラーがある場合は注釈を表示
+    } else {
+      setShowCollectErrorAnnotation(false); // エラーがない場合は注釈を非表示
+    }
+  }, [collectError]);
+
+  // 解析エラー注釈の表示制御
+  useEffect(() => {
+    if (data && !data.ok) {
+      setShowParseErrorAnnotation(true);
+    } else {
+      setShowParseErrorAnnotation(false);
+    }
+  }, [data]);
 
   // アップロード成功時にダイアログを開く
   useEffect(() => {
@@ -179,11 +239,27 @@ export default function Index() {
   // OneDrive接続完了クエリパラメータを削除
   useEffect(() => {
     if (!onedriveConnected) return;
-    setIsAuthDialogOpen(true);
+    // OAuthから戻った直後にセッション状態を確認する
+    setIsCheckingOneDriveSession(true);
+    // セッション状態を確認するAPIを呼び出す
+    sessionStatusFetcher.load("/api/onedrive/session-status");
+    // クエリパラメータを削除してURLをクリーンにする
     const next = new URLSearchParams(searchParams);
     next.delete("onedrive");
     setSearchParams(next, { replace: true });
-  }, [onedriveConnected, searchParams, setSearchParams]);
+  }, [onedriveConnected, searchParams, setSearchParams, sessionStatusFetcher]);
+
+  useEffect(() => {
+    // OAuth復帰直後に実行したセッション確認が成功した時だけ、1回だけ表示する
+    if (isCheckingOneDriveSession && sessionStatusFetcher.data?.ok) {
+      setIsAuthDialogOpen(true);
+      setIsCheckingOneDriveSession(false);
+    }
+    // セッション確認が失敗した場合はダイアログを表示しないで終了する
+    if (isCheckingOneDriveSession && sessionStatusFetcher.data && !sessionStatusFetcher.data.ok) {
+      setIsCheckingOneDriveSession(false);
+    }
+  }, [isCheckingOneDriveSession, sessionStatusFetcher.data]);
 
   // Markdown-it インスタンス（タスクリストプラグイン有効化）
   const markdown = useMemo(() => {
@@ -219,6 +295,12 @@ export default function Index() {
           {showPrRefAnnotation ? (
             // 入力エラー注釈
             <p className="annotation-text-small">owner/repo/prNumber を正しく指定してください。</p>
+          ) : null}
+          {showCollectErrorAnnotation && collectError ? (
+            <p className="annotation-text-small">{"プルリクエストが見つかりませんでした。再度お試しください。"}</p>
+          ) : null}
+          {showParseErrorAnnotation && data && !data.ok ? (
+            <p className="annotation-text-small">{data.error}</p>
           ) : null}
         </div>
         <div className="form">
@@ -267,6 +349,7 @@ export default function Index() {
                 } else {
                   setShowPrRefAnnotation(false);
                 }
+                setShowCollectErrorAnnotation(true);
                 // /api/collect へPOSTし、成功したら取得した description を表示/解析に使う
                 collectFetcher.submit(
                   { owner, repo, prNumber },
@@ -326,6 +409,7 @@ export default function Index() {
                   } else {
                     setShowPrRefAnnotation(false);
                   }
+                  setShowParseErrorAnnotation(true);
                 }}
               >
                 Parse Checklist
@@ -399,7 +483,7 @@ export default function Index() {
       <SaveErrorDialog
         open={isErrorDialogOpen}
         onClose={() => setIsErrorDialogOpen(false)}
-        error={uploadError ?? ""}
+        error={effectiveError ?? ""}
         isAuthError={isAuthError}
       />
       <SuccessDialog

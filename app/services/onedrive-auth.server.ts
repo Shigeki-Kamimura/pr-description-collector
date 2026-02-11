@@ -10,9 +10,12 @@ import { createCookie } from "react-router";
 
 // Microsoft Entra ID (旧AAD) OAuth2エンドポイント
 const AUTH_BASE_URL = "https://login.microsoftonline.com";
+// デフォルトテナント（common: 個人/組織アカウント両対応）
 const DEFAULT_TENANT = "common";
-const SCOPES = ["offline_access", "Files.ReadWrite"];
+// OAuthスコープ
+const SCOPES = ["offline_access", "Files.ReadWrite", "User.Read"];
 
+// OAuthトークンレスポンス
 type TokenResponse = {
   access_token: string;
   refresh_token?: string;
@@ -21,6 +24,7 @@ type TokenResponse = {
   scope?: string;
 };
 
+// トークンキャッシュ構造体
 type TokenCache = {
   accessToken: string;
   refreshToken: string | null;
@@ -28,7 +32,11 @@ type TokenCache = {
 };
 
 // メモリ上のトークンキャッシュ（開発用）
+// request が無い場面でのフォールバックとして使う。
 let tokenCache: TokenCache | null = null;
+// セッションID => トークンキャッシュ（開発用）
+// Cookieにはトークン本体を入れず、セッションIDだけを保存して参照する。
+const tokenStore = new Map<string, TokenCache>();
 
 // OAuth状態管理用Cookie
 export const onedriveOAuthStateCookie = createCookie("onedrive_oauth_state", {
@@ -36,6 +44,15 @@ export const onedriveOAuthStateCookie = createCookie("onedrive_oauth_state", {
   path: "/",
   sameSite: "lax",
   maxAge: 60 * 5,
+});
+
+// OAuthセッションID保持用Cookie（開発用）
+// 値は tokenStore のキーとして利用する。
+export const onedriveOAuthSessionCookie = createCookie("onedrive_oauth_session", {
+  httpOnly: true,
+  path: "/",
+  sameSite: "lax",
+  maxAge: 60 * 60 * 24 * 7,
 });
 
 // 環境変数からOAuth設定を取得する
@@ -87,6 +104,8 @@ export function buildAuthorizeUrl(state: string): string {
     response_mode: "query",
     scope: SCOPES.join(" "),
     state,
+    // SSOで即時リダイレクトされるケースでも、明示的に認証画面を表示する
+    prompt: "select_account",
   });
   return `${getAuthorizeEndpoint()}?${params.toString()}`;
 }
@@ -99,6 +118,26 @@ function setTokenCache(response: TokenResponse) {
     refreshToken: response.refresh_token ?? tokenCache?.refreshToken ?? null,
     expiresAt,
   };
+}
+// 非同期でセッションIDをCookieから取得する
+async function getSessionId(cookieHeader: string | null): Promise<string | null> {
+  if (!cookieHeader) return null;
+  try {
+    const raw = (await onedriveOAuthSessionCookie.parse(cookieHeader)) as string | null;
+    return raw ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function storeTokenForSession(sessionId: string, cache: TokenCache) {
+  // OAuth callback 直後に、セッションIDへ取得トークンを紐づける。
+  tokenStore.set(sessionId, cache);
+}
+
+function getTokenForSession(sessionId: string | null): TokenCache | null {
+  if (!sessionId) return null;
+  return tokenStore.get(sessionId) ?? null;
 }
 
 // トークンをリクエストする
@@ -119,7 +158,7 @@ async function requestToken(params: URLSearchParams): Promise<TokenResponse> {
 }
 
 // OneDrive Graph API関連ユーティリティ
-export async function exchangeCodeForToken(code: string): Promise<void> {
+export async function exchangeCodeForToken(code: string): Promise<TokenCache> {
   ensureConfig();
   const params = new URLSearchParams({
     client_id: getClientId(),
@@ -131,10 +170,11 @@ export async function exchangeCodeForToken(code: string): Promise<void> {
   });
   const token = await requestToken(params);
   setTokenCache(token);
+  return tokenCache!;
 }
 
 // リフレッシュトークンでアクセストークンを更新する
-async function refreshAccessToken(refreshToken: string): Promise<void> {
+async function refreshAccessToken(refreshToken: string): Promise<TokenCache> {
   ensureConfig();
   const params = new URLSearchParams({
     client_id: getClientId(),
@@ -145,18 +185,42 @@ async function refreshAccessToken(refreshToken: string): Promise<void> {
   });
   const token = await requestToken(params);
   setTokenCache(token);
+  return tokenCache!;
 }
 
 // 有効なアクセストークンを取得する
-export async function getAccessToken(): Promise<string> {
+export async function getAccessToken(request?: Request): Promise<string> {
+  // API経由の取得は、必ずCookieのセッションと紐づくトークンのみを使う。
+  // 別セッションのグローバルトークンを使うと401の原因になる。
+  if (request) {
+    const sessionId = await getSessionId(request.headers.get("Cookie"));
+    const sessionToken = getTokenForSession(sessionId);
+
+    if (sessionToken && sessionToken.expiresAt > Date.now()) {
+      tokenCache = sessionToken;
+      return sessionToken.accessToken;
+    }
+
+    if (sessionToken?.refreshToken) {
+      const refreshed = await refreshAccessToken(sessionToken.refreshToken);
+      if (sessionId) storeTokenForSession(sessionId, refreshed);
+      return refreshed.accessToken;
+    }
+
+    throw new Error("OneDrive OAuth token がありません。/auth/onedrive/login で認証してください。");
+  }
+
+  // requestなし（サーバー内部利用）時のみ、グローバルキャッシュを参照する。
   if (tokenCache && tokenCache.expiresAt > Date.now()) {
     return tokenCache.accessToken;
   }
 
   // リフレッシュトークンで更新を試みる
-  if (tokenCache?.refreshToken) {
-    await refreshAccessToken(tokenCache.refreshToken);
-    if (tokenCache?.accessToken) return tokenCache.accessToken;
+  // refresh時もセッション側を優先する。
+  const refreshToken = tokenCache?.refreshToken;
+  if (refreshToken) {
+    const refreshed = await refreshAccessToken(refreshToken);
+    if (refreshed.accessToken) return refreshed.accessToken;
   }
 
   throw new Error("OneDrive OAuth token がありません。/auth/onedrive/login で認証してください。");
