@@ -8,6 +8,12 @@
 
 import { createCookie } from "react-router";
 
+// Cookie署名用のシークレット（必須）
+const sessionSecret = process.env.SESSION_SECRET ?? "";
+if (!sessionSecret) {
+  throw new Error("SESSION_SECRET が未設定です。Cookie署名のために必須です。");
+}
+
 // Microsoft Entra ID (旧AAD) OAuth2エンドポイント
 const AUTH_BASE_URL = "https://login.microsoftonline.com";
 // デフォルトテナント（common: 個人/組織アカウント両対応）
@@ -37,22 +43,51 @@ let tokenCache: TokenCache | null = null;
 // セッションID => トークンキャッシュ（開発用）
 // Cookieにはトークン本体を入れず、セッションIDだけを保存して参照する。
 const tokenStore = new Map<string, TokenCache>();
+const DEFAULT_TOKEN_STORE_MAX_SESSIONS = 500;
+
+function getTokenStoreMaxSessions(): number {
+  const raw = process.env.ONEDRIVE_TOKEN_STORE_MAX_SESSIONS;
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TOKEN_STORE_MAX_SESSIONS;
+  return parsed;
+}
+
+function purgeExpiredTokenSessions(now = Date.now()) {
+  for (const [key, value] of tokenStore.entries()) {
+    if (value.expiresAt <= now) {
+      tokenStore.delete(key);
+    }
+  }
+}
+
+function enforceTokenStoreLimit() {
+  const limit = getTokenStoreMaxSessions();
+  while (tokenStore.size > limit) {
+    const oldestKey = tokenStore.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    tokenStore.delete(oldestKey);
+  }
+}
 
 // OAuth状態管理用Cookie
 export const onedriveOAuthStateCookie = createCookie("onedrive_oauth_state", {
-  httpOnly: true,
+  httpOnly: true, // cookieをJavaScriptから参照できないようにする
   path: "/",
   sameSite: "lax",
   maxAge: 60 * 5,
+  secure: true, // HTTPS限定
+  secrets: [sessionSecret],
 });
 
-// OAuthセッションID保持用Cookie（開発用）
+// OAuthセッションID保持用Cookie
 // 値は tokenStore のキーとして利用する。
 export const onedriveOAuthSessionCookie = createCookie("onedrive_oauth_session", {
-  httpOnly: true,
+  httpOnly: true, // cookieをJavaScriptから参照できないようにする
   path: "/",
   sameSite: "lax",
   maxAge: 60 * 60 * 24 * 7,
+  secure: true, // HTTPS限定
+  secrets: [sessionSecret],
 });
 
 // 環境変数からOAuth設定を取得する
@@ -132,12 +167,26 @@ async function getSessionId(cookieHeader: string | null): Promise<string | null>
 
 export function storeTokenForSession(sessionId: string, cache: TokenCache) {
   // OAuth callback 直後に、セッションIDへ取得トークンを紐づける。
+  purgeExpiredTokenSessions();
+  // 既存キーを再挿入してMap末尾へ移動し、LRU順序を維持する。
+  tokenStore.delete(sessionId);
   tokenStore.set(sessionId, cache);
+  enforceTokenStoreLimit();
 }
 
 function getTokenForSession(sessionId: string | null): TokenCache | null {
   if (!sessionId) return null;
-  return tokenStore.get(sessionId) ?? null;
+  purgeExpiredTokenSessions();
+  const cache = tokenStore.get(sessionId);
+  if (!cache) return null;
+  if (cache.expiresAt <= Date.now()) {
+    tokenStore.delete(sessionId);
+    return null;
+  }
+  // 参照したセッションを末尾へ移動し、最近利用順を更新する。
+  tokenStore.delete(sessionId);
+  tokenStore.set(sessionId, cache);
+  return cache;
 }
 
 // トークンをリクエストする

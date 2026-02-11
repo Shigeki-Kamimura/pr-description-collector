@@ -21,6 +21,7 @@ A modern, production-ready template for building full-stack React applications u
 - OneDrive: `ONEDRIVE_ACCESS_TOKEN`（開発用・`/me/drive` を操作できるトークン）
 - OneDrive OAuth（サーバーサイド）: `ONEDRIVE_TENANT` / `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` / `ONEDRIVE_REDIRECT_URI`
 - OneDrive 保存先: `ONEDRIVE_BASE_FOLDER`（任意）/ `ONEDRIVE_WORK_FOLDER`（任意）
+- 開発サーバー: `DEV_HTTPS` / `DEV_SERVER_HOST` / `DEV_SERVER_PORT` / `DEV_HTTPS_KEY_PATH` / `DEV_HTTPS_CERT_PATH`
 - 例: [.env.example](.env.example)
 
 ### Installation
@@ -39,7 +40,10 @@ Start the development server with HMR:
 npm run dev
 ```
 
-Your application will be available at `http://localhost:5173`.
+Your application will be available at:
+
+- `http://localhost:5173`（デフォルト）
+- `https://localhost:5173`（`DEV_HTTPS=true` かつ証明書設定時）
 
 ## Building for Production
 
