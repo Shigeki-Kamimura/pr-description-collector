@@ -43,15 +43,19 @@ let tokenCache: TokenCache | null = null;
 // セッションID => トークンキャッシュ（開発用）
 // Cookieにはトークン本体を入れず、セッションIDだけを保存して参照する。
 const tokenStore = new Map<string, TokenCache>();
+// トークンストアの最大セッション数（開発用）
 const DEFAULT_TOKEN_STORE_MAX_SESSIONS = 500;
 
+// トークンストアの最大セッション数を環境変数から取得する
+// 返り値: 正の整数（未設定/不正値の場合はデフォルト値を返す）
 function getTokenStoreMaxSessions(): number {
-  const raw = process.env.ONEDRIVE_TOKEN_STORE_MAX_SESSIONS;
-  const parsed = Number.parseInt(raw ?? "", 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TOKEN_STORE_MAX_SESSIONS;
+  const raw = process.env.ONEDRIVE_TOKEN_STORE_MAX_SESSIONS; // 任意
+  const parsed = Number.parseInt(raw ?? "", 10); // NaNの場合もある
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TOKEN_STORE_MAX_SESSIONS; // デフォルト値
   return parsed;
 }
 
+// 期限切れトークンセッションを削除する
 function purgeExpiredTokenSessions(now = Date.now()) {
   for (const [key, value] of tokenStore.entries()) {
     if (value.expiresAt <= now) {
@@ -60,8 +64,11 @@ function purgeExpiredTokenSessions(now = Date.now()) {
   }
 }
 
+// トークンストアのセッション数が上限を超えていたら古いものから削除する
 function enforceTokenStoreLimit() {
+  // 上限セッション数を取得
   const limit = getTokenStoreMaxSessions();
+  // 上限を超えていたら古いものから削除
   while (tokenStore.size > limit) {
     const oldestKey = tokenStore.keys().next().value as string | undefined;
     if (!oldestKey) break;
