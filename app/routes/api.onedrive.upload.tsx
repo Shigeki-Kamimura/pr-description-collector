@@ -39,8 +39,8 @@ export type ApiOneDriveUploadResponse =
     };
 // 文字列を整数に変換（失敗時は NaN）
 function toInt(value: string) {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : NaN;
+  if (!/^[1-9]\d*$/.test(value)) return NaN;
+  return Number.parseInt(value, 10);
 }
 
 export async function action({ request }: ActionFunctionArgs) {

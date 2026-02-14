@@ -1,13 +1,17 @@
 /*
   OneDriveセッション状態確認API
-  Cookieセッションに紐づくOneDriveアクセストークンでドライブ情報を取得できるか確認する。
+  OAuthで発行した Cookie セッションに紐づく OneDrive アクセストークンで
+  ドライブ情報を取得できるか確認する。
   レスポンスはJSON形式。
 */
 
-
 import type { LoaderFunctionArgs } from "react-router";
+// OneDrive認証とトークン管理のユーティリティ
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
-import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
+// OneDriveサービスの生成ユーティリティ
+import { getAccessToken } from "../services/onedrive-auth.server";
+// OneDriveサービスの生成ユーティリティ
+import { createOneDriveService } from "../services/onedrive.server";
 
 export type ApiOneDriveSessionStatusResponse =
   | {
@@ -26,17 +30,21 @@ export type ApiOneDriveSessionStatusResponse =
 
 export async function loader({ request }: LoaderFunctionArgs) {
   try {
-    // requestのCookieセッションを使って現在のOneDriveドライブへアクセスできるか検証する
-    const onedrive = await createOneDriveServiceFromEnv(request);
+    // OAuth cookie セッションに紐づくアクセストークンで現在のOneDriveドライブへアクセスできるか検証する
+    const accessToken = await getAccessToken(request);
+    // OneDriveサービスを作成してドライブ情報を取得する。これに成功すればセッションは有効と判断できる。
+    const onedrive = createOneDriveService({ accessToken });
+    // ドライブ情報を取得してセッションの有効性を確認する。これに成功すればセッションは有効と判断できる。
     const drive = await onedrive.getDriveInfo();
+    // 成功レスポンスを返す。ドライブIDとドライブタイプを含める。
     return Response.json(
       {
-        ok: true,
-        drive: {
+        ok: true, // セッションが有効であることを示すフラグ
+        drive: {  //  ドライブ情報を含むオブジェクト
           id: drive.id,
           driveType: drive.driveType,
         },
-      } satisfies ApiOneDriveSessionStatusResponse,
+      } satisfies ApiOneDriveSessionStatusResponse, //  レスポンスの型を指定
       { status: 200 },
     );
   } catch (error) {
