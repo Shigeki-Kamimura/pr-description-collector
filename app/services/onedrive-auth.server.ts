@@ -154,12 +154,11 @@ export function buildAuthorizeUrl(state: string): string {
   return `${getAuthorizeEndpoint()}?${params.toString()}`;
 }
 
-// トークンキャッシュを更新する
-function setTokenCache(response: TokenResponse) {
+function toTokenCache(response: TokenResponse, previousRefreshToken: string | null = null): TokenCache {
   const expiresAt = Date.now() + Math.max(response.expires_in - 60, 30) * 1000;
-  tokenCache = {
+  return {
     accessToken: response.access_token,
-    refreshToken: response.refresh_token ?? tokenCache?.refreshToken ?? null,
+    refreshToken: response.refresh_token ?? previousRefreshToken,
     expiresAt,
   };
 }
@@ -228,8 +227,9 @@ export async function exchangeCodeForToken(code: string): Promise<TokenCache> {
     scope: SCOPES.join(" "),
   });
   const token = await requestToken(params);
-  setTokenCache(token);
-  return tokenCache!;
+  const nextCache = toTokenCache(token);
+  tokenCache = nextCache;
+  return nextCache;
 }
 
 // リフレッシュトークンでアクセストークンを更新する
@@ -243,8 +243,9 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenCache> {
     scope: SCOPES.join(" "),
   });
   const token = await requestToken(params);
-  setTokenCache(token);
-  return tokenCache!;
+  const nextCache = toTokenCache(token, refreshToken);
+  tokenCache = nextCache;
+  return nextCache;
 }
 
 // 有効なアクセストークンを取得する

@@ -12,8 +12,24 @@ import {
   storeTokenForSession, // セッションIDに対応するトークンを保存する
 } from "../services/onedrive-auth.server";
 
+function isHttpsRequest(request: Request): boolean {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  if (forwardedProto) {
+    const proto = forwardedProto.split(",")[0]?.trim();
+    return proto === "https";
+  }
+  return new URL(request.url).protocol === "https:";
+}
+
 // コールバックURLのローダー
 export async function loader({ request }: { request: Request }) {
+  if (!isHttpsRequest(request)) {
+    return new Response(
+      "HTTPS endpoint is required for OneDrive OAuth callback. Access via https://localhost:5173.",
+      { status: 400 },
+    );
+  }
+
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");

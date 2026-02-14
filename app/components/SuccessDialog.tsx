@@ -30,7 +30,7 @@ export function SuccessDialog({ open, onClose }: SuccessDialogProps) {
         <h2 id="success-dialog-title" className="dialog-title">
           保存が完了しました
         </h2>
-        <p className="dialog-text">jsonファイル の保存に成功しました。</p>
+        <p className="dialog-text">description.md と archive.json を保存しました。</p>
         <div className="dialog-actions">
           <button type="button" className="btn secondary" onClick={onClose}>
             Close

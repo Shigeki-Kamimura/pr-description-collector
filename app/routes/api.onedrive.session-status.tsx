@@ -6,6 +6,7 @@
 
 
 import type { LoaderFunctionArgs } from "react-router";
+import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
 
 export type ApiOneDriveSessionStatusResponse =
@@ -22,15 +23,6 @@ export type ApiOneDriveSessionStatusResponse =
       errorCode?: string;
       errorMessage?: string;
     };
-
-function extractOneDriveError(rawMessage: string): { code?: string; message?: string } {
-  const codeMatch = rawMessage.match(/\[code=([^\]]+)\]/);
-  const messageMatch = rawMessage.match(/OneDrive API error \(\d+\)(?: \[code=[^\]]+\])?:\s*([^()]+?)(?:\s+\(token|$)/);
-  return {
-    code: codeMatch?.[1],
-    message: messageMatch?.[1]?.trim(),
-  };
-}
 
 export async function loader({ request }: LoaderFunctionArgs) {
   try {
@@ -50,11 +42,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : "Unknown error";
     const parsed = extractOneDriveError(rawMessage);
-    const isAuthLike =
-      rawMessage.includes("OAuth token") ||
-      rawMessage.includes("認証") ||
-      rawMessage.includes("OneDrive API error (401)") ||
-      rawMessage.includes("OneDrive API error (403)");
+    const isAuthLike = isOneDriveAuthLikeError(rawMessage);
 
     const hasDetail = Boolean(parsed.code || parsed.message);
     const message = isAuthLike
@@ -70,7 +58,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         errorCode: parsed.code,
         errorMessage: parsed.message ?? rawMessage,
       } satisfies ApiOneDriveSessionStatusResponse,
-      { status: 502 },
+      { status: isAuthLike ? 401 : 502 },
     );
   }
 }

@@ -2,8 +2,8 @@
  * OneDrive連携（サーバー側）
  *
  * 現時点の前提:
- * - アクセストークンは環境変数から渡す（開発用）
- * - 認証フロー（OAuth/MSAL）は後続Issueで追加する
+ * - アクセストークンは OAuth/MSAL（onedrive-auth.server 経由）で取得する
+ * - 開発用途として、環境変数からアクセストークンを渡す経路もサポートする
  */
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";

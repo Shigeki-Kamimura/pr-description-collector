@@ -6,17 +6,22 @@
  * - 画像を含むHTML生成は後続（まず保存先＝OneDriveを確立する）
  *
  * 前提:
- * - 開発段階では ONEDRIVE_ACCESS_TOKEN を env で与える（/me/drive 配下を利用）
+ * - OneDrive アクセストークンは OAuth セッションを優先し、開発用途で env 指定も許可する
  */
 import type { ActionFunctionArgs } from "react-router";
-
+// GitHub関連のサービス
 import {
   createGitHubServiceFromEnv,
   type PullRequestRef,
 } from "../services/github.server";
+// OneDrive関連のサービスとエラー処理ユーティリティ
+import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+// OneDriveサービスの生成ユーティリティ
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
+// チェックリスト解析ユーティリティ
 import { parseChecklist } from "../services/checklist";
 
+// OneDriveのファイル名やフォルダ名に使えるように文字列を整形するユーティリティ
 export type ApiOneDriveUploadResponse =
   | {
       ok: true;
@@ -32,15 +37,6 @@ export type ApiOneDriveUploadResponse =
       errorCode?: string;
       errorMessage?: string;
     };
-// OneDriveエラーメッセージからコードとメッセージを抽出する
-function extractOneDriveError(rawMessage: string): { code?: string; message?: string } {
-  const codeMatch = rawMessage.match(/\[code=([^\]]+)\]/);
-  const messageMatch = rawMessage.match(/OneDrive API error \(\d+\)(?: \[code=[^\]]+\])?:\s*([^()]+?)(?:\s+\(token|$)/);
-  return {
-    code: codeMatch?.[1],
-    message: messageMatch?.[1]?.trim(),
-  };
-}
 // 文字列を整数に変換（失敗時は NaN）
 function toInt(value: string) {
   const numberValue = Number(value);
@@ -64,6 +60,8 @@ export async function action({ request }: ActionFunctionArgs) {
     // サービス初期化
     const github = await createGitHubServiceFromEnv();
     const onedrive = await createOneDriveServiceFromEnv(request);
+    // 要件: 保存前に OneDrive セッション有効性を確認する
+    await onedrive.getDriveInfo();
     // PR情報取得
     const ref: PullRequestRef = {
       repo: { owner, name: repo },
@@ -108,7 +106,9 @@ export async function action({ request }: ActionFunctionArgs) {
       "",
     );
     // フォルダ名に使うタイトルを整形
-    const safeTitle = slugifyForPath(pullRequest.title) ?? "untitled";
+    const rawSafeTitle = slugifyForPath(pullRequest.title);
+    // フォルダパスを組み立てる、安全なタイトルが空文字列になる場合は "untitled" を使う
+    const safeTitle = rawSafeTitle.length > 0 ? rawSafeTitle : "untitled";
     const rootPrefix = workFolder ? `${workFolder}/${baseFolder}` : baseFolder;
     const folderPath = `${rootPrefix}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
     // description.md 保存
@@ -159,18 +159,14 @@ export async function action({ request }: ActionFunctionArgs) {
     const rawMessage = error instanceof Error ? error.message : "Unknown error";
     const parsed = extractOneDriveError(rawMessage);
     let message = rawMessage;
-    if (
+    if (isOneDriveAuthLikeError(rawMessage)) {
       // OneDrive の認証エラーと推測される場合、わかりやすいメッセージに変換
-      rawMessage.includes("OAuth token") ||
-      rawMessage.includes("認証") ||
-      rawMessage.includes("OneDrive API error (401)") || // 未認証
-      rawMessage.includes("OneDrive API error (403)")   // アクセス権限がない
-    ) {
       const hasDetail = Boolean(parsed.code || parsed.message);
       message = hasDetail
         ? `${parsed.code ?? "UNKNOWN"}: ${parsed.message ?? rawMessage}`
         : "OneDrive 認証が切れています。再認証してから保存をやり直してください。";
     }
+    const status = isOneDriveAuthLikeError(rawMessage) ? 401 : 502;
     return Response.json(
       {
         ok: false,
@@ -178,7 +174,7 @@ export async function action({ request }: ActionFunctionArgs) {
         errorCode: parsed.code,
         errorMessage: parsed.message ?? rawMessage,
       } satisfies ApiOneDriveUploadResponse,
-      { status: 502 },
+      { status },
     );
   }
 }
