@@ -55,10 +55,12 @@ function getTokenStoreMaxSessions(): number {
   return parsed;
 }
 
-// 期限切れトークンセッションを削除する
-function purgeExpiredTokenSessions(now = Date.now()) {
+// 期限切れかつリフレッシュ不能なセッションのみ削除する
+function purgeExpiredUnrefreshableTokenSessions(now = Date.now()) {
+  // tokenStore を全走査して、期限切れかつリフレッシュトークンがないセッションを削除する。
   for (const [key, value] of tokenStore.entries()) {
-    if (value.expiresAt <= now) {
+    // 期限切れかつリフレッシュトークンがないセッションを削除
+    if (value.expiresAt <= now && !value.refreshToken) {
       tokenStore.delete(key);
     }
   }
@@ -163,33 +165,34 @@ function setTokenCache(response: TokenResponse) {
 }
 // 非同期でセッションIDをCookieから取得する
 async function getSessionId(cookieHeader: string | null): Promise<string | null> {
+  // Cookieヘッダーがない場合はnullを返す
   if (!cookieHeader) return null;
   try {
+    // onedriveOAuthSessionCookieを使ってセッションIDを安全に取得する
     const raw = (await onedriveOAuthSessionCookie.parse(cookieHeader)) as string | null;
     return raw ?? null;
   } catch {
+    // 解析に失敗した場合はnullを返す
     return null;
   }
 }
 
 export function storeTokenForSession(sessionId: string, cache: TokenCache) {
   // OAuth callback 直後に、セッションIDへ取得トークンを紐づける。
-  purgeExpiredTokenSessions();
+  purgeExpiredUnrefreshableTokenSessions();
   // 既存キーを再挿入してMap末尾へ移動し、LRU順序を維持する。
   tokenStore.delete(sessionId);
+  // セッションIDにトークンキャッシュを保存する。
   tokenStore.set(sessionId, cache);
+  // トークンストアの上限を超えていたら古いものから削除する。
   enforceTokenStoreLimit();
 }
 
 function getTokenForSession(sessionId: string | null): TokenCache | null {
   if (!sessionId) return null;
-  purgeExpiredTokenSessions();
+  purgeExpiredUnrefreshableTokenSessions();
   const cache = tokenStore.get(sessionId);
   if (!cache) return null;
-  if (cache.expiresAt <= Date.now()) {
-    tokenStore.delete(sessionId);
-    return null;
-  }
   // 参照したセッションを末尾へ移動し、最近利用順を更新する。
   tokenStore.delete(sessionId);
   tokenStore.set(sessionId, cache);
