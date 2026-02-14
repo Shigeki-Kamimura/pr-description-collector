@@ -1,0 +1,35 @@
+# Development reverse proxy for this app / このアプリ用の開発リバースプロキシ設定
+# - Public entry / 公開入口: https://localhost:5173
+# - Vite upstream / Vite上流: http://127.0.0.1:5174
+# - If opened via 127.0.0.1, redirect to localhost to keep OAuth host stable.
+#   127.0.0.1 で開かれた場合は localhost に寄せて OAuth のホストを安定化する
+#
+# IMPORTANT / 重要:
+# - Prepare your own certificate/key files.
+#   証明書(PEM)と秘密鍵(PEM)は各自で用意してください。
+# - Update ssl_certificate and ssl_certificate_key paths before enabling.
+#   有効化前に ssl_certificate / ssl_certificate_key のパスを実ファイルへ変更してください。
+
+server {
+    listen 5173 ssl;
+    server_name localhost 127.0.0.1;
+
+    # Provide your own PEM files. / 各自で用意した PEM ファイルのパスを指定する
+    ssl_certificate     /etc/nginx/certs/localhost+2.pem;
+    ssl_certificate_key /etc/nginx/certs/localhost+2-key.pem;
+
+    if ($http_host ~* "^127\.0\.0\.1(:5173)?$") {
+        return 302 https://localhost:5173$request_uri;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:5174;
+        proxy_http_version 1.1;
+        # Keep host:port for React Router CSRF check (Origin vs Host)
+        # React Router の CSRF チェックで Origin と一致させるため、port付きHostを渡す
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}

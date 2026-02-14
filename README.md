@@ -21,7 +21,7 @@ A modern, production-ready template for building full-stack React applications u
 - OneDrive: `ONEDRIVE_ACCESS_TOKEN`（開発用・`/me/drive` を操作できるトークン）
 - OneDrive OAuth（サーバーサイド）: `ONEDRIVE_TENANT` / `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` / `ONEDRIVE_REDIRECT_URI`
 - OneDrive 保存先: `ONEDRIVE_BASE_FOLDER`（任意）/ `ONEDRIVE_WORK_FOLDER`（任意）
-- 開発サーバー: `DEV_HTTPS` / `DEV_SERVER_HOST` / `DEV_SERVER_PORT` / `DEV_HTTPS_KEY_PATH` / `DEV_HTTPS_CERT_PATH`
+- 開発サーバー: `DEV_SERVER_HOST` / `DEV_SERVER_PORT`（ViteはHTTP想定。HTTPSはNginx等のリバースプロキシで終端）
 - 例: [.env.example](.env.example)
 
 ### Installation
@@ -43,7 +43,56 @@ npm run dev
 Your application will be available at:
 
 - `http://localhost:5173`（デフォルト）
-- `https://localhost:5173`（`DEV_HTTPS=true` かつ証明書設定時）
+
+### Development with Nginx HTTPS (Recommended for OAuth)
+### NginxでHTTPS終端する開発手順（OAuth向け推奨）
+
+Use Nginx as HTTPS entrypoint and keep Vite on HTTP:
+NginxをHTTPS入口にして、ViteはHTTPで起動します。
+
+```env
+# .env
+DEV_SERVER_HOST=127.0.0.1
+DEV_SERVER_PORT=5174
+ONEDRIVE_REDIRECT_URI=https://localhost:5173/auth/onedrive/callback
+```
+
+Nginx config template:
+Nginx設定テンプレート:
+
+- `docs/vite-dev-https.conf.example`
+
+Setup steps:
+セットアップ手順:
+
+1. Prepare your own PEM files (certificate and private key).
+1. PEMファイル（証明書と秘密鍵）を各自で用意する。
+2. Copy the template:
+2. テンプレートを配置する:
+
+```bash
+sudo cp docs/vite-dev-https.conf.example /etc/nginx/sites-available/vite-dev-https
+```
+
+3. `/etc/nginx/sites-available/vite-dev-https` 内の証明書パスを実ファイルに合わせて修正する。
+4. サイトを有効化し、Nginxを再読込する:
+
+```bash
+sudo ln -sfn /etc/nginx/sites-available/vite-dev-https /etc/nginx/sites-enabled/vite-dev-https
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+5. アプリサーバー（Vite）を起動する:
+
+```bash
+npm run dev
+```
+
+Access always from:
+アクセス先は常に以下に統一:
+
+- `https://localhost:5173`
 
 ## Building for Production
 
