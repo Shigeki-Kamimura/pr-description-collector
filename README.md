@@ -21,7 +21,7 @@ A modern, production-ready template for building full-stack React applications u
 - OneDrive: `ONEDRIVE_ACCESS_TOKEN`（開発用・`/me/drive` を操作できるトークン）
 - OneDrive OAuth（サーバーサイド）: `ONEDRIVE_TENANT` / `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` / `ONEDRIVE_REDIRECT_URI`
 - OneDrive 保存先: `ONEDRIVE_BASE_FOLDER`（任意）/ `ONEDRIVE_WORK_FOLDER`（任意）
-- 開発サーバー: `DEV_SERVER_HOST` / `DEV_SERVER_PORT`（ViteはHTTP想定。HTTPSはNginx等のリバースプロキシで終端）
+- 開発サーバー: `DEV_SERVER_HOST` / `DEV_SERVER_PORT`（ViteはHTTPで待受。利用者アクセスはHTTPS終端を必須とする）
 - 例: [.env.example](.env.example)
 
 ### Installation
@@ -42,10 +42,11 @@ npm run dev
 
 Your application will be available at:
 
-- `http://localhost:5173`（デフォルト）
+- `https://localhost:5173`（開発時の必須入口）
+- `http://localhost:5173` は非サポート（OAuthフロー対象外）
 
-### Development with Nginx HTTPS (Recommended for OAuth)
-### NginxでHTTPS終端する開発手順（OAuth向け推奨）
+### Development with Nginx HTTPS (Required)
+### NginxでHTTPS終端する開発手順（必須）
 
 Use Nginx as HTTPS entrypoint and keep Vite on HTTP:
 NginxをHTTPS入口にして、ViteはHTTPで起動します。
