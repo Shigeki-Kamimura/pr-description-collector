@@ -13,12 +13,26 @@ import {
 } from "../services/onedrive-auth.server";
 
 function isHttpsRequest(request: Request): boolean {
-  const forwardedProto = request.headers.get("x-forwarded-proto");
-  if (forwardedProto) {
-    const proto = forwardedProto.split(",")[0]?.trim();
-    return proto === "https";
-  }
-  return new URL(request.url).protocol === "https:";
+  const url = new URL(request.url);
+  if (url.protocol === "https:") return true;
+
+  const trustForwardedProto =
+    (process.env.ONEDRIVE_TRUST_X_FORWARDED_PROTO ?? "").toLowerCase() === "true" ||
+    process.env.ONEDRIVE_TRUST_X_FORWARDED_PROTO === "1";
+  if (!trustForwardedProto) return false;
+
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  if (forwardedProto !== "https") return false;
+
+  const host = request.headers.get("host")?.trim().toLowerCase();
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim().toLowerCase();
+  const trustedHosts = new Set(
+    (process.env.ONEDRIVE_TRUSTED_PROXY_HOSTS ?? "localhost:5173,127.0.0.1:5173")
+      .split(",")
+      .map((v) => v.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  return Boolean(host && forwardedHost && host === forwardedHost && trustedHosts.has(host));
 }
 
 // コールバックURLのローダー
@@ -48,7 +62,14 @@ export async function loader({ request }: { request: Request }) {
 
   // stateの検証
   const cookieHeader = request.headers.get("Cookie");
-  const storedState = await onedriveOAuthStateCookie.parse(cookieHeader);
+  // state と code の検証の前に、Cookieから保存していたstateを安全に取得する。
+  // これにより、OAuthフローの途中でリクエストが改ざんされていないかを検証できるようになる。
+  let storedState: string | null = null;
+  try {
+    storedState = (await onedriveOAuthStateCookie.parse(cookieHeader)) as string | null;
+  } catch {
+    storedState = null;
+  }
 
   // state と code の検証
   if (!code || !state || !storedState || state !== storedState) {

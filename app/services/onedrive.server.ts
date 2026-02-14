@@ -329,12 +329,32 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
  * 環境変数または OAuth から OneDriveService を作る（開発用）。
  */
 export async function createOneDriveServiceFromEnv(request?: Request): Promise<OneDriveService> {
+  // 環境変数からアクセストークンを取得する。これが設定されていれば OAuth より優先して利用する。
   const accessToken = process.env.ONEDRIVE_ACCESS_TOKEN ?? "";
+  // request がある場合は OAuth セッションを優先し、取得できない場合のみ env にフォールバックする。
+  const { getAccessToken } = await import("./onedrive-auth.server");
+
+  // request がある場合は OAuth セッションを優先し、取得できない場合のみ env にフォールバックする。
+  if (request) {
+    try {
+      // OAuthセッションからアクセストークンを取得してサービスを作成する。これに失敗したら env のトークンで試す。
+      const oauthToken = await getAccessToken(request);
+      return createOneDriveService({ accessToken: oauthToken });
+    } catch (oauthError) {
+      // OAuthトークンの取得に失敗した場合は、環境変数からアクセストークンを取得してサービスを作成する。これも失敗したらエラーをスローする。
+      if (accessToken) {
+        return createOneDriveService({ accessToken });
+      }
+      throw oauthError;
+    }
+  }
+
   if (accessToken) {
+    // 環境変数からアクセストークンを取得してサービスを作成する。これに失敗したらエラーをスローする。
     return createOneDriveService({ accessToken });
   }
 
-  const { getAccessToken } = await import("./onedrive-auth.server");
-  const oauthToken = await getAccessToken(request);
+  const oauthToken = await getAccessToken();
+  // OAuthセッションからアクセストークンを取得してサービスを作成する。これに失敗したらエラーをスローする。
   return createOneDriveService({ accessToken: oauthToken });
 }

@@ -7,17 +7,38 @@ import { buildAuthorizeUrl, onedriveOAuthStateCookie } from "../services/onedriv
 
 // コールバックURLのローダー
 function isHttpsRequest(request: Request): boolean {
-  // ローカル開発環境でプロキシ経由の場合、x-forwarded-proto ヘッダーを確認してHTTPSかどうかを判断する
-  const forwardedProto = request.headers.get("x-forwarded-proto");
-  // ヘッダーがない場合は、URLのプロトコルを直接確認する
-  if (forwardedProto) {
-    // x-forwarded-proto ヘッダーはカンマ区切りで複数のプロトコルが指定されることがあるため、最初の値を取り出して確認する
-    const proto = forwardedProto.split(",")[0]?.trim();
-    // HTTPSであればtrueを返す
-    return proto === "https";
-  }
-  // ヘッダーがない場合は、URLのプロトコルを直接確認する
-  return new URL(request.url).protocol === "https:";
+  // URLのプロトコルがHTTPSであるかを確認する。OneDrive OAuthはセキュアな環境でのみ動作する
+  // HTTPSでない場合はエラーレスポンスを返す。
+  const url = new URL(request.url);
+  if (url.protocol === "https:") return true;
+  // 環境変数でX-Forwarded-Protoを信頼する設定がある場合、ヘッダーを確認してHTTPSかどうかを判断する
+  const trustForwardedProto =
+    (process.env.ONEDRIVE_TRUST_X_FORWARDED_PROTO ?? "").toLowerCase() === "true" ||
+    process.env.ONEDRIVE_TRUST_X_FORWARDED_PROTO === "1";
+    // X-Forwarded-Protoを信頼する設定がない場合は、HTTPSでないと判断する
+  if (!trustForwardedProto) return false;
+
+  // X-Forwarded-Protoヘッダーを確認してHTTPSかどうかを判断する。
+  // これにより、リバースプロキシの背後で動作している場合でも正しくHTTPSを判定できるようになる。
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  // X-Forwarded-ProtoがHTTPSでない場合は、HTTPSでないと判断する
+  if (forwardedProto !== "https") return false;
+  // ホストが信頼できるプロキシからのものであることを確認する。
+  // これにより、X-Forwarded-Protoヘッダーのなりすましを防止する。
+  const host = request.headers.get("host")?.trim().toLowerCase();
+  // X-Forwarded-Hostヘッダーを確認して、リクエストが信頼できるプロキシからのものであることを確認する。
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim().toLowerCase();
+  // 信頼できるプロキシのホストを環境変数から取得する。
+  // これにより、リクエストが信頼できるプロキシからのものであることを確認する。
+  const trustedHosts = new Set(
+    (process.env.ONEDRIVE_TRUSTED_PROXY_HOSTS ?? "localhost:5173,127.0.0.1:5173")
+      .split(",")
+      .map((v) => v.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  // ホストが信頼できるプロキシからのものであることを確認する。
+  // これにより、X-Forwarded-Protoヘッダーのなりすましを防止する。
+  return Boolean(host && forwardedHost && host === forwardedHost && trustedHosts.has(host));
 }
 
 // ローダー関数
