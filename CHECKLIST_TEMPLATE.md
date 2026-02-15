@@ -5,18 +5,18 @@
 ### Scope: チェックリスト小見出し（例: OneDrive Save）
 - [ ] CHK-01 <項目名>
   Result: <調査結果>
-  Evidence: <URL or filename or N/A>
+  Evidence: 
 - [ ] CHK-02 <項目名>
   Result: <調査結果>
-  Evidence: <URL or filename or N/A>
+  Evidence: 
 
 ### Scope: チェックリスト小見出し（例: Routing / Wiring）
 - [ ] CHK-03 <項目名>
   Result: <調査結果>
-  Evidence: <URL or filename or N/A>
+  Evidence: 
 - [ ] CHK-04 <項目名>
   Result: <調査結果>
-  Evidence: <URL or filename or N/A>
+  Evidence: 
 
 ### Scope: チェックリスト小見出し（例: Out of Scope）
 - [ ] CHK-05 <項目名>
