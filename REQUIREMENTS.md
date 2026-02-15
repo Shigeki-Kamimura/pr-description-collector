@@ -89,7 +89,8 @@
      - `body`: ディスクリプション本文
      - `archivedAt`: 保存日時（日本時間）
      - `archivedAtUtc`: 保存日時（UTC）
-   - `archivedBy` は OneDrive の `/me` 情報から取得し、取得不可時は `UNKNOWN` とする。
+   - `archivedBy` は OneDrive の `/me` 情報から取得する。
+   - `/me` から保存実行者を特定できない場合（`userPrincipalName` / `displayName` ともに取得不可）は、監査性を優先して保存処理を中止し、エラーとして扱う。
    - 保存処理の開始前に `/me/drive` で OneDrive セッションの有効性を検証し、未認証時は保存処理を実行しない。
 
 ## 非機能要件

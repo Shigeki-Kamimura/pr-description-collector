@@ -19,14 +19,12 @@ import type { ActionFunctionArgs } from "react-router";
 
 import {
   createGitHubServiceFromEnv,
-  type PullRequest, // PR情報の型
-  type PullRequestReview, // PRレビュー情報の型
-  type PullRequestRef, // PR参照の型
+  type PullRequest,
+  type PullRequestReview,
+  type PullRequestRef,
 } from "../services/github.server";
-// PR のオーナー、リポジトリ名、PR番号の入力をバリデーションするユーティリティ
-import { validatePrRefInput } from "../services/validation"; 
-// OctokitのRequestErrorを使ってエラー判定
-import { RequestError } from "@octokit/request-error";
+import { validatePrRefInput } from "../services/validation";
+import { getHttpStatus } from "../services/http-status";
 
 export type ApiCollectResponse =
   | {
@@ -42,21 +40,7 @@ export type ApiCollectResponse =
       error: string;
     };
 
-function getHttpStatus(error: unknown): number | null {
-  if (error instanceof RequestError) return error.status;
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "status" in error &&
-    typeof (error as { status?: unknown }).status === "number"
-  ) {
-    return (error as { status: number }).status;
-  }
-  return null;
-}
-
 export async function action({ request }: ActionFunctionArgs) {
-  // フォームPOSTで受け取る（fetcher.submit からの送信もここに来る）
   const formData = await request.formData();
   const validation = validatePrRefInput(formData);
   if (!validation.ok) {
@@ -70,7 +54,6 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   try {
-    // GitHub APIへアクセスし、PRメタ＋本文（Markdown）＋レビューを取得
     const github = await createGitHubServiceFromEnv();
     const ref: PullRequestRef = {
       repo: { owner: validation.owner, name: validation.repo },
@@ -79,7 +62,6 @@ export async function action({ request }: ActionFunctionArgs) {
     const pullRequest = await github.getPullRequest(ref);
     const reviews = await github.getPullRequestReviews(ref);
 
-    // UI/後続処理向けの簡易フラグ（厳密な「最新APPROVED」判定は後で強化してもよい）
     const hasApproved = reviews.some((r) => r.state === "APPROVED");
 
     return Response.json(
@@ -94,7 +76,6 @@ export async function action({ request }: ActionFunctionArgs) {
     );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    // RequestError の型が崩れても、status が取れればユーザー向け文言へ変換する
     const status = getHttpStatus(error);
     if (status !== null) {
       switch (status) {

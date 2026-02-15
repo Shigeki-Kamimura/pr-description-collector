@@ -9,19 +9,15 @@
  * - OneDrive アクセストークンは OAuth セッションを優先し、開発用途で env 指定も許可する
  */
 import type { ActionFunctionArgs } from "react-router";
-// GitHub関連のサービス
 import {
   createGitHubServiceFromEnv,
   type PullRequestRef,
 } from "../services/github.server";
-// OneDrive関連のサービスとエラー処理ユーティリティ
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
-// OneDriveサービスの生成ユーティリティ
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
-// チェックリスト解析ユーティリティ
 import { parseChecklist } from "../services/checklist";
+import { validatePrRefInput } from "../services/validation";
 
-// OneDriveのファイル名やフォルダ名に使えるように文字列を整形するユーティリティ
 export type ApiOneDriveUploadResponse =
   | {
       ok: true;
@@ -34,64 +30,49 @@ export type ApiOneDriveUploadResponse =
   | {
       ok: false;
       error: string;
+      isAuthError: boolean;
       errorCode?: string;
       errorMessage?: string;
     };
-// 文字列を整数に変換（失敗時は NaN）
-function toInt(value: string) {
-  if (!/^[1-9]\d*$/.test(value)) return NaN;
-  return Number.parseInt(value, 10);
-}
-
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
-  const owner = String(formData.get("owner") ?? "").trim();
-  const repo = String(formData.get("repo") ?? "").trim();
-  const prNumber = toInt(String(formData.get("prNumber") ?? "").trim());
-
-  if (!owner || !repo || !Number.isFinite(prNumber) || prNumber <= 0) {
+  const validation = validatePrRefInput(formData);
+  if (!validation.ok) {
     return Response.json(
-      { ok: false, error: "owner/repo/prNumber を正しく指定してください" } satisfies ApiOneDriveUploadResponse,
+      { ok: false, error: validation.error, isAuthError: false } satisfies ApiOneDriveUploadResponse,
       { status: 400 },
     );
   }
+  const { owner, repo, prNumber } = validation;
 
   try {
-    // サービス初期化
     const github = await createGitHubServiceFromEnv();
     const onedrive = await createOneDriveServiceFromEnv(request);
-    // 要件: 保存前に OneDrive セッション有効性を確認する
+    // 保存処理の前に OneDrive セッションの有効性を検証する。
     await onedrive.getDriveInfo();
-    // PR情報取得
     const ref: PullRequestRef = {
       repo: { owner, name: repo },
       number: prNumber,
     };
-    // PR情報・レビュー情報取得
     const pullRequest = await github.getPullRequest(ref);
     const reviews = await github.getPullRequestReviews(ref);
-    // 監査要件: 保存実行者を特定できない場合は保存処理を中止する
+    // 保存実行者を特定できない場合は監査要件のため保存を中止する。
     const currentUser = await onedrive.getCurrentUser();
-    // チェックリスト解析
     const checklist = parseChecklist(pullRequest.body);
 
-    // 承認レビューのうち最新のものを取得
     const approvedReviews = reviews
       .filter((review) => review.state === "APPROVED" && review.submittedAt)
       .sort((a, b) => (a.submittedAt! < b.submittedAt! ? 1 : -1));
     const latestApproved = approvedReviews[0] ?? null;
     const reviewer = latestApproved?.userLogin ?? "UNKNOWN";
-    // アーカイブ実行者
     const archivedBy = currentUser.userPrincipalName ?? currentUser.displayName ?? "UNKNOWN";
     if (archivedBy === "UNKNOWN") {
       throw new Error("OneDrive current user could not be identified.");
     }
 
-    // OneDriveへ保存
     const now = new Date();
     const archivedAtUtc = now.toISOString();
     const archivedAt = formatIsoForJst(now);
-    // フォルダパス例: project/repo/PullRequests/PR123-title
     const baseFolder = (process.env.ONEDRIVE_BASE_FOLDER ?? "project").replace(
       /^\/+|\/+$/g,
       "",
@@ -100,44 +81,39 @@ export async function action({ request }: ActionFunctionArgs) {
       /^\/+|\/+$/g,
       "",
     );
-    // フォルダ名に使うタイトルを整形
     const rawSafeTitle = slugifyForPath(pullRequest.title);
-    // フォルダパスを組み立てる、安全なタイトルが空文字列になる場合は "untitled" を使う
     const safeTitle = rawSafeTitle.length > 0 ? rawSafeTitle : "untitled";
     const rootPrefix = workFolder ? `${workFolder}/${baseFolder}` : baseFolder;
     const folderPath = `${rootPrefix}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
-    // description.md 保存
     const descriptionMd = await onedrive.saveText(
       `${folderPath}/description.md`,
       pullRequest.body,
     );
-    // archive.json 保存
     const archiveJson = await onedrive.saveText(
       `${folderPath}/archive.json`,
       JSON.stringify(
         {
-          prNumber: pullRequest.number, // 
+          prNumber: pullRequest.number,
           prTitle: pullRequest.title,
           repoOwner: owner,
           repoName: repo,
           prUrl: pullRequest.url,
-          prAuthor: pullRequest.authorLogin ?? "UNKNOWN", // PR作成者
-          mergedBy: pullRequest.mergedByLogin ?? "UNKNOWN", // PRマージ実行者
-          reviewer, // 承認レビュー実行者（最新）
-          archivedBy, // アーカイブ実行者（OneDriveユーザー）
-          body: pullRequest.body, // PR本文（Markdown）
-          archivedAt, // アーカイブ日時（JST ISO 8601）
-          archivedAtUtc, // アーカイブ日時（UTC ISO 8601）
+          prAuthor: pullRequest.authorLogin ?? "UNKNOWN",
+          mergedBy: pullRequest.mergedByLogin ?? "UNKNOWN",
+          reviewer,
+          archivedBy,
+          body: pullRequest.body,
+          archivedAt,
+          archivedAtUtc,
           checklist: {
-            items: checklist.items, // チェックリスト項目一覧
+            items: checklist.items,
           },
-          evidenceImages: [], // 画像情報一覧（未対応）
+          evidenceImages: [],
         },
         null,
         2,
       ),
     );
-    // レスポンス返却
     return Response.json(
       {
         ok: true,
@@ -150,12 +126,10 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
-    // エラーハンドリング
     const rawMessage = error instanceof Error ? error.message : "Unknown error";
     const parsed = extractOneDriveError(rawMessage);
     let message = rawMessage;
     if (isOneDriveAuthLikeError(rawMessage)) {
-      // OneDrive の認証エラーと推測される場合、わかりやすいメッセージに変換
       const hasDetail = Boolean(parsed.code || parsed.message);
       message = hasDetail
         ? `${parsed.code ?? "UNKNOWN"}: ${parsed.message ?? rawMessage}`
@@ -166,6 +140,7 @@ export async function action({ request }: ActionFunctionArgs) {
       {
         ok: false,
         error: message,
+        isAuthError: status === 401,
         errorCode: parsed.code,
         errorMessage: parsed.message ?? rawMessage,
       } satisfies ApiOneDriveUploadResponse,
@@ -173,7 +148,6 @@ export async function action({ request }: ActionFunctionArgs) {
     );
   }
 }
-// JSTオフセットでISO 8601形式の文字列を生成する
 function formatIsoForJst(date: Date): string {
   const offsetMinutes = 9 * 60;
   const offsetMs = offsetMinutes * 60 * 1000;
@@ -193,8 +167,8 @@ function formatIsoForJst(date: Date): string {
 
 function slugifyForPath(value: string): string {
   const normalized = value
-    .normalize("NFC") // Unicode正規化で結合文字を統一する
-    // OneDrive/Windowsで使えない文字のみ除外し、日本語などは保持する
+    .normalize("NFC")
+    // OneDrive/Windowsで禁止される文字だけ除去し、日本語は保持する。
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
     .trim()
     .replace(/\s+/g, "-")
