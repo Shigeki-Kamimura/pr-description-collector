@@ -16,8 +16,6 @@ const sessionSecret = process.env.SESSION_SECRET ?? "";
 // 開発環境では固定のセッションシークレットを使用する。
 // これにより、ローカルでの開発が容易になる。
 const isProduction = process.env.NODE_ENV === "production";
-// 開発環境では固定のセッションシークレットを使用する。
-// これにより、ローカルでの開発が容易になる。
 const devFallbackSessionSecret = "dev-only-session-secret-change-me";
 // セッションシークレットを決定する。
 // production では環境変数が必須で、development ではフォールバックを許容する。
@@ -248,7 +246,6 @@ async function requestToken(params: URLSearchParams): Promise<TokenResponse> {
 
 // OneDrive Graph API関連ユーティリティ
 export async function exchangeCodeForToken(code: string): Promise<TokenCache> {
-  // コードをトークンに交換する。これに成功すればOAuthフローは完了する。
   ensureConfig();
   const params = new URLSearchParams({
     client_id: getClientId(),
@@ -258,42 +255,29 @@ export async function exchangeCodeForToken(code: string): Promise<TokenCache> {
     redirect_uri: getRedirectUri(),
     scope: SCOPES.join(" "),
   });
-  // 取得したトークンをキャッシュに変換する。
-  // これでアクセストークンとリフレッシュトークン、期限が得られる。
   const token = await requestToken(params);
-  // グローバルキャッシュを更新する。
-  // これにより、requestがない場面でもトークンを利用できるようになる。
   const nextCache = toTokenCache(token);
-  // グローバルキャッシュを更新する。
+  // request がない呼び出し経路向けに、グローバルキャッシュへも反映する。
   tokenCache = nextCache;
   return nextCache;
 }
 
-// リフレッシュトークンでアクセストークンを更新する
+// リフレッシュトークンでアクセストークンを更新し、必要に応じてグローバルキャッシュへ反映する。
 async function refreshAccessToken(
-  // リフレッシュトークンを使って新しいアクセストークンを取得する。
-  // これに成功すればセッションを継続できる。
   refreshToken: string,
-  // オプション: グローバルキャッシュも更新するかどうか。デフォルトは true。
   options: { updateGlobalCache?: boolean } = {},
 ): Promise<TokenCache> {
-  // リフレッシュトークンを使って新しいアクセストークンを取得する。
   const { updateGlobalCache = true } = options;
   ensureConfig();
-  // リフレッシュトークンを使って新しいアクセストークンを取得する。
   const params = new URLSearchParams({
-    client_id: getClientId(), // クライアントIDを環境変数から取得する。
-    client_secret: getClientSecret(), // クライアントシークレットを環境変数から取得する。
-    grant_type: "refresh_token", // グラントタイプはリフレッシュトークン
-    refresh_token: refreshToken, // リフレッシュトークンを指定する。
-    scope: SCOPES.join(" "), // スコープをスペース区切りで指定する。
+    client_id: getClientId(),
+    client_secret: getClientSecret(),
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    scope: SCOPES.join(" "),
   });
-  // 取得したトークンをキャッシュに変換する。
-  // これでアクセストークンとリフレッシュトークン、期限が得られる。
   const token = await requestToken(params);
-  // 取得したトークンをキャッシュに変換する。
   const nextCache = toTokenCache(token, refreshToken);
-  // グローバルキャッシュを更新する。
   if (updateGlobalCache) {
     tokenCache = nextCache;
   }

@@ -1,12 +1,11 @@
 /**
- * 
- *httpsリクエストかどうかを判定するユーティリティ関数
- *OneDrive OAuthはセキュアな環境でのみ動作するため、HTTPSでのアクセスを要求するために使用される。
- *この関数は、リクエストがHTTPSであるかどうかを判定し、必要に応じてX-Forwarded-Protoヘッダーも考慮する。
- *これにより、リバースプロキシの背後にある環境でも正しくHTTPSリクエストを判定できるようになる。
-
-  *この関数は、OneDrive OAuthのloginとcallbackのルートローダーで使用されており、
-  HTTPSでないアクセスに対して適切なエラーレスポンスを返すために利用されている。
+ * HTTPSリクエストかどうかを判定するユーティリティ。
+ *
+ * OneDrive OAuth はセキュアな環境でのみ動作するため、HTTPSアクセスを要求する。
+ * 通常は request.url の scheme を優先し、明示的に許可された場合のみ
+ * X-Forwarded-Proto / X-Forwarded-Host も考慮して判定する。
+ *
+ * auth.onedrive.login / auth.onedrive.callback の両ルートで共通利用する。
  */
 
 export function isHttpsRequest(request: Request): boolean {

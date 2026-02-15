@@ -193,9 +193,8 @@ function tryDecodeJwt(token: string): { expIso?: string; aud?: string; scp?: str
   }
 }
 
-// トークンストアにトークンを保存するユーティリティ
+// Graph APIを呼び出してテキストレスポンスを取得するユーティリティ
 async function graphText(accessToken: string, path: string, init?: RequestInit): Promise<string> {
-  // Graph APIを呼び出してテキストレスポンスを取得するユーティリティ
   const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
     ...init,
     headers: {
@@ -211,7 +210,7 @@ async function graphText(accessToken: string, path: string, init?: RequestInit):
   return await response.text();
 }
 
-// OneDrive APIを呼び出してテキストレスポンスを取得するユーティリティ
+// 指定パスのドライブアイテムのメタデータを取得するユーティリティ
 async function getItemByPath(accessToken: string, path: string): Promise<GraphDriveItem> {
   // パスをエンコードしてAPIを呼び出す。これに成功すればアイテムの存在が確認できる。
   const encoded = encodeDrivePath(path);
@@ -250,12 +249,11 @@ async function createFolder(
   });
 }
 
-// 信頼できるホストの検証
+// OneDrive上で指定フォルダ階層を存在させる（なければ作成する）
 async function ensureFolderPath(accessToken: string, folderPath: string): Promise<void> {
   // フォルダパスを正規化して分割し、階層ごとに存在確認と作成を行う。
   const normalized = normalizeDrivePath(folderPath);
   if (!normalized) return;
-  // フォルダパスを正規化して分割し、階層ごとに存在確認と作成を行う。
   const segments = normalized.split("/").filter(Boolean);
   let parentId: "root" | DriveItemId = "root";
   let currentPath = "";
