@@ -57,7 +57,13 @@ NginxをHTTPS入口にして、ViteはHTTPで起動します。
 DEV_SERVER_HOST=127.0.0.1
 DEV_SERVER_PORT=5174
 ONEDRIVE_REDIRECT_URI=https://localhost:5173/auth/onedrive/callback
+ONEDRIVE_TRUST_X_FORWARDED_PROTO=true
+# optional: customize trusted proxy hosts when needed
+# ONEDRIVE_TRUSTED_PROXY_HOSTS=localhost:5173,127.0.0.1:5173
 ```
+
+`ONEDRIVE_TRUST_X_FORWARDED_PROTO=true` is required for the Nginx HTTPS-termination setup above, because
+the app receives upstream HTTP while external access is HTTPS.
 
 Nginx config template:
 Nginx設定テンプレート:

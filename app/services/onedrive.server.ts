@@ -85,6 +85,17 @@ type GraphDrive = {
   id: string;
   driveType?: string | null;
 };
+class OneDriveApiError extends Error {
+  status: number;
+  code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "OneDriveApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
 
 // パスの正規化とエンコード
 function normalizeDrivePath(path: string) {
@@ -168,7 +179,11 @@ async function graphJson<T>(accessToken: string, path: string, init?: RequestIni
       }
     }
     const codePart = errorCode ? ` [code=${errorCode}]` : ""; // エラーコード部分
-    throw new Error(`OneDrive API error (${response.status})${codePart}${details}${requestMeta}${debug}`); // エラーをスロー
+    throw new OneDriveApiError(
+      `OneDrive API error (${response.status})${codePart}${details}${requestMeta}${debug}`,
+      response.status,
+      errorCode || undefined,
+    );
   }
 
   return (await response.json()) as T;
@@ -320,10 +335,8 @@ async function ensureFolderPath(accessToken: string, folderPath: string): Promis
       parentId = existing.id;
       continue;
     } catch (error) {
-      // 404エラー以外はスローする。これにより、予期せぬエラーが見逃されるのを防ぐ。
-      const message = error instanceof Error ? error.message : "";
-      const isNotFound = message.includes("(404)");
-      if (!isNotFound) throw error;
+      // 404（未作成）だけを許容し、それ以外は失敗として扱う。
+      if (!(error instanceof OneDriveApiError) || error.status !== 404) throw error;
     }
 
     try {

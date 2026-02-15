@@ -10,16 +10,14 @@
 // 例えば、OAuthの認可URLを生成する関数や、トークンを交換する関数などが含まれる。
 // これらの関数は、認証ルートのローダーやアクションで利用される。
 import { createCookie } from "react-router";
+import { randomBytes } from "node:crypto";
 
 // Cookie署名用のシークレット
 const sessionSecret = process.env.SESSION_SECRET ?? "";
-// 開発環境では固定のセッションシークレットを使用する。
-// これにより、ローカルでの開発が容易になる。
 const isProduction = process.env.NODE_ENV === "production";
-const devFallbackSessionSecret = "dev-only-session-secret-change-me";
-// セッションシークレットを決定する。
-// production では環境変数が必須で、development ではフォールバックを許容する。
-const resolvedSessionSecret = sessionSecret || (!isProduction ? devFallbackSessionSecret : "");
+const generatedDevSessionSecret =
+  !sessionSecret && !isProduction ? randomBytes(32).toString("hex") : "";
+const resolvedSessionSecret = sessionSecret || generatedDevSessionSecret;
 
 // セッションシークレットが未設定の場合はエラーを投げる。production では必須、development では警告を出す。
 if (!resolvedSessionSecret) {
@@ -27,9 +25,9 @@ if (!resolvedSessionSecret) {
 }
 // 開発環境でセッションシークレットが未設定の場合は警告を出す。
 // これにより、開発者がセキュリティリスクを認識できるようになる。
-if (!sessionSecret && !isProduction) {
+if (generatedDevSessionSecret) {
   console.warn(
-    "SESSION_SECRET is not set. Falling back to a fixed development secret; set SESSION_SECRET explicitly for safer local usage.",
+    "SESSION_SECRET is not set. Using a random per-process development secret. OAuth cookies will be invalidated on server restart; set SESSION_SECRET explicitly for stable local sessions.",
   );
 }
 
