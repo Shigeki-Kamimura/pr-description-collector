@@ -66,9 +66,6 @@ export async function action({ request }: ActionFunctionArgs) {
     const latestApproved = approvedReviews[0] ?? null;
     const reviewer = latestApproved?.userLogin ?? "UNKNOWN";
     const archivedBy = currentUser.userPrincipalName ?? currentUser.displayName ?? "UNKNOWN";
-    if (archivedBy === "UNKNOWN") {
-      throw new Error("OneDrive current user could not be identified.");
-    }
 
     const now = new Date();
     const archivedAtUtc = now.toISOString();
