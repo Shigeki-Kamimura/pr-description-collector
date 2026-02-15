@@ -2,41 +2,29 @@
 
 ## チェックリスト
 
-### Scope: GitHub API (Octokit)
+### Scope: チェックリスト小見出し（例: OneDrive Save）
 - [ ] CHK-01 <項目名>
-  Result: <結果>
+  Result: <調査結果>
   Evidence: <URL or filename or N/A>
-
 - [ ] CHK-02 <項目名>
-  Result: <結果>
+  Result: <調査結果>
   Evidence: <URL or filename or N/A>
 
-### Scope: Checklist Extraction
+### Scope: チェックリスト小見出し（例: Routing / Wiring）
 - [ ] CHK-03 <項目名>
-  Result: <結果>
+  Result: <調査結果>
   Evidence: <URL or filename or N/A>
-
-### Scope: Markdown → HTML (markdown-it)
 - [ ] CHK-04 <項目名>
-  Result: <結果>
+  Result: <調査結果>
   Evidence: <URL or filename or N/A>
 
-### Scope: OneDrive Save (Graph API)
+### Scope: チェックリスト小見出し（例: Out of Scope）
 - [ ] CHK-05 <項目名>
-  Result: <結果>
-  Evidence: <URL or filename or N/A>
+  Result: <調査結果>
+  Evidence: 
 
-### Scope: Routing / Wiring
-- [ ] CHK-06 <項目名>
-  Result: <結果>
-  Evidence: <URL or filename or N/A>
-
-### Deliverables
-- [ ] CHK-07 <項目名>
-  Result: <結果>
-  Evidence: <URL or filename or N/A>
-
-### Not in This PR (Explicitly Out of Scope)
-- [ ] CHK-08 <項目名>
-  Result: <結果>
-  Evidence: <URL or filename or N/A>
+## 使い方ルール
+- `CHK-xx` は PR 全体で連番にする（Scope をまたいでも番号を振り直さない）
+- `Result` は「確認した事実」を1文で書く
+- `Evidence` は画像URL、PRコメントURL、ファイル名のいずれかを必ず入れる
+- 非該当は `Evidence: N/A` ではなく、`Result` に `N/A: 理由` を書く
