@@ -464,6 +464,7 @@ export async function createOneDriveServiceFromEnv(request?: Request): Promise<O
     return createOneDriveService({ accessToken });
   }
 
-  const oauthToken = await getAccessToken();
-  return createOneDriveService({ accessToken: oauthToken });
+  throw new Error(
+    "OneDrive アクセストークンを解決できません。request なし経路では ONEDRIVE_ACCESS_TOKEN を設定してください。",
+  );
 }
