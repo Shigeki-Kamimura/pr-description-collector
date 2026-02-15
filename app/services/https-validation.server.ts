@@ -20,6 +20,13 @@ export function isHttpsRequest(request: Request): boolean {
   const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
   if (forwardedProto !== "https") return false;
 
+  // 任意: 共有シークレットを設定した環境では、プロキシからの正当な転送のみ許可する。
+  const sharedSecret = process.env.ONEDRIVE_TRUST_PROXY_SHARED_SECRET ?? "";
+  if (sharedSecret) {
+    const provided = request.headers.get("x-onedrive-proxy-secret") ?? "";
+    if (provided !== sharedSecret) return false;
+  }
+
   const host = request.headers.get("host")?.trim().toLowerCase();
   const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim().toLowerCase();
   const trustedHosts = new Set(

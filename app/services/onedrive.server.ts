@@ -194,7 +194,9 @@ function tryDecodeJwt(token: string): { expIso?: string; aud?: string; scp?: str
   const parts = token.split(".");
   if (parts.length < 2) return null;
   try {
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/"); // Base64URL -> Base64
+    const base64url = parts[1].replace(/-/g, "+").replace(/_/g, "/"); // Base64URL -> Base64
+    const padLength = (4 - (base64url.length % 4)) % 4;
+    const base64 = `${base64url}${"=".repeat(padLength)}`;
     const payloadJson = Buffer.from(base64, "base64").toString("utf8"); // デコード
     const payload = JSON.parse(payloadJson) as { exp?: number; aud?: string; scp?: string };
     const expIso = payload.exp ? new Date(payload.exp * 1000).toISOString() : undefined;
@@ -343,13 +345,22 @@ async function ensureFolderPath(accessToken: string, folderPath: string): Promis
       // フォルダが存在しない場合は作成する。これに成功すればフォルダが作成される。
       const created = await createFolder(accessToken, parentId, segment);
       parentId = created.id;
-    } catch (error) {
+    } catch (createError) {
       // 競合などが起きた場合は再取得して進める
-      const existing = await getItemByPath(accessToken, currentPath);
-      if (!existing.folder) {
-        throw new Error(`OneDrive path is not a folder: ${currentPath}`);
+      try {
+        const existing = await getItemByPath(accessToken, currentPath);
+        if (!existing.folder) {
+          throw new Error(`OneDrive path is not a folder: ${currentPath}`);
+        }
+        parentId = existing.id;
+      } catch (refetchError) {
+        const createReason = createError instanceof Error ? createError.message : String(createError);
+        const refetchReason = refetchError instanceof Error ? refetchError.message : String(refetchError);
+        throw new Error(
+          `Failed to ensure OneDrive folder path: ${currentPath} ` +
+            `(create failed: ${createReason}; refetch failed: ${refetchReason})`,
+        );
       }
-      parentId = existing.id;
     }
   }
 }
@@ -440,7 +451,12 @@ export async function createOneDriveServiceFromEnv(request?: Request): Promise<O
       const oauthToken = await getAccessToken(request);
       return createOneDriveService({ accessToken: oauthToken });
     } catch (oauthError) {
-      throw oauthError;
+      const reason = oauthError instanceof Error ? oauthError.message : String(oauthError);
+      throw new Error(
+        `OneDrive OAuth セッションからアクセストークンを取得できませんでした: ${reason} ` +
+          `(request 経路では ONEDRIVE_ACCESS_TOKEN へはフォールバックしません。` +
+          `/auth/onedrive/login で再認証してください。)`,
+      );
     }
   }
 

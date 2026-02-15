@@ -13,6 +13,9 @@ function formatPartialWriteErrorMessage(error: string): string | null {
   const rollbackMatch = error.match(
     /rollback=(ok|failed|not-attempted)(?:\s*\(([^)]*)\))?/,
   );
+  if (!rollbackMatch && import.meta.env.DEV) {
+    console.warn("formatPartialWriteErrorMessage: rollback status parse failed", { error });
+  }
   const rollbackStatus = rollbackMatch?.[1] ?? "unknown";
   const rollbackDetail = rollbackMatch?.[2] ?? null;
 

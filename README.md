@@ -60,10 +60,14 @@ ONEDRIVE_REDIRECT_URI=https://localhost:5173/auth/onedrive/callback
 ONEDRIVE_TRUST_X_FORWARDED_PROTO=true
 # optional: customize trusted proxy hosts when needed
 # ONEDRIVE_TRUSTED_PROXY_HOSTS=localhost:5173,127.0.0.1:5173
+# optional: require proxy shared secret when trusting forwarded headers
+# ONEDRIVE_TRUST_PROXY_SHARED_SECRET=change-this
 ```
 
 `ONEDRIVE_TRUST_X_FORWARDED_PROTO=true` is required for the Nginx HTTPS-termination setup above, because
 the app receives upstream HTTP while external access is HTTPS.
+If `ONEDRIVE_TRUST_PROXY_SHARED_SECRET` is set, the app also requires
+`x-onedrive-proxy-secret` to match before trusting `X-Forwarded-*` headers.
 
 Nginx config template:
 Nginx設定テンプレート:

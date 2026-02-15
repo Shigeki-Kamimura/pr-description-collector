@@ -203,7 +203,7 @@ export default function Index() {
     const next = new URLSearchParams(searchParams);
     next.delete("onedrive");
     setSearchParams(next, { replace: true });
-  }, [onedriveConnected, searchParams, setSearchParams]);
+  }, [onedriveConnected, searchParams, setSearchParams, sessionStatusFetcher]);
 
   useEffect(() => {
     if (isCheckingOneDriveSession && sessionStatusFetcher.data?.ok) {

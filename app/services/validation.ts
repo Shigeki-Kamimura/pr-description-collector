@@ -10,7 +10,7 @@ export type PrRefValidationResult =
   | { ok: false; error: string };
 
 const OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
-const REPO_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
+const REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 const PR_NUMBER_PATTERN = /^[1-9][0-9]*$/;
 
 export function validatePrRefInput(formData: FormData): PrRefValidationResult {

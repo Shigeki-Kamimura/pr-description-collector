@@ -92,7 +92,7 @@ export async function action({ request }: ActionFunctionArgs) {
     let archiveJson: { name: string; webUrl: string } | null = null;
     let rollbackAttempted = false;
     let rollbackSucceeded = false;
-    let rollbackFailureReason: string | null = null;
+    let rollbackFailureReason = "unknown";
 
     try {
       descriptionMd = await onedrive.saveText(descriptionPath, pullRequest.body);
@@ -129,7 +129,8 @@ export async function action({ request }: ActionFunctionArgs) {
           rollbackSucceeded = true;
         } catch (rollbackError) {
           rollbackSucceeded = false;
-          rollbackFailureReason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+          const reason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+          rollbackFailureReason = reason.trim() || "unknown";
         }
       }
 
@@ -141,7 +142,7 @@ export async function action({ request }: ActionFunctionArgs) {
       const rollbackInfo = rollbackAttempted
         ? rollbackSucceeded
           ? "rollback=ok"
-          : `rollback=failed (${rollbackFailureReason ?? "unknown"})`
+          : `rollback=failed (${rollbackFailureReason})`
         : "rollback=not-attempted";
       throw new Error(`${raw} | partial-write: description.md saved then archive.json failed; ${rollbackInfo}`);
     }
@@ -207,5 +208,6 @@ function slugifyForPath(value: string): string {
     .replace(/-+/g, "-")
     .replace(/^[-.\s]+|[-.\s]+$/g, "");
 
-  return normalized.slice(0, 80);
+  // サロゲートペアを壊さないよう、コードポイント単位で上限を適用する。
+  return Array.from(normalized).slice(0, 80).join("");
 }
