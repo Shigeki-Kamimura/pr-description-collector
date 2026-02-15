@@ -82,35 +82,66 @@ export async function action({ request }: ActionFunctionArgs) {
     const safeTitle = rawSafeTitle.length > 0 ? rawSafeTitle : "untitled";
     const rootPrefix = workFolder ? `${workFolder}/${baseFolder}` : baseFolder;
     const folderPath = `${rootPrefix}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
-    const descriptionMd = await onedrive.saveText(
-      `${folderPath}/description.md`,
-      pullRequest.body,
-    );
-    const archiveJson = await onedrive.saveText(
-      `${folderPath}/archive.json`,
-      JSON.stringify(
-        {
-          prNumber: pullRequest.number,
-          prTitle: pullRequest.title,
-          repoOwner: owner,
-          repoName: repo,
-          prUrl: pullRequest.url,
-          prAuthor: pullRequest.authorLogin ?? "UNKNOWN",
-          mergedBy: pullRequest.mergedByLogin ?? "UNKNOWN",
-          reviewer,
-          archivedBy,
-          body: pullRequest.body,
-          archivedAt,
-          archivedAtUtc,
-          checklist: {
-            items: checklist.items,
+    const descriptionPath = `${folderPath}/description.md`;
+    const archivePath = `${folderPath}/archive.json`;
+    // description.md と archive.json の両方を保存する。description.md の保存に成功してから archive.json の保存に失敗した場合は、description.md を削除するロールバックを試みる。
+    let descriptionMd: { name: string; webUrl: string } | null = null;
+    let archiveJson: { name: string; webUrl: string } | null = null;
+    let rollbackAttempted = false;
+    let rollbackSucceeded = false;
+    let rollbackFailureReason: string | null = null;
+
+    try {
+      descriptionMd = await onedrive.saveText(descriptionPath, pullRequest.body);
+      archiveJson = await onedrive.saveText(
+        archivePath,
+        JSON.stringify(
+          {
+            prNumber: pullRequest.number,
+            prTitle: pullRequest.title,
+            repoOwner: owner,
+            repoName: repo,
+            prUrl: pullRequest.url,
+            prAuthor: pullRequest.authorLogin ?? "UNKNOWN",
+            mergedBy: pullRequest.mergedByLogin ?? "UNKNOWN",
+            reviewer,
+            archivedBy,
+            body: pullRequest.body,
+            archivedAt,
+            archivedAtUtc,
+            checklist: {
+              items: checklist.items,
+            },
+            evidenceImages: [],
           },
-          evidenceImages: [],
-        },
-        null,
-        2,
-      ),
-    );
+          null,
+          2,
+        ),
+      );
+    } catch (writeError) {
+      if (descriptionMd && !archiveJson) {
+        rollbackAttempted = true;
+        try {
+          await onedrive.deleteItem(descriptionPath);
+          rollbackSucceeded = true;
+        } catch (rollbackError) {
+          rollbackSucceeded = false;
+          rollbackFailureReason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        }
+      }
+
+      const raw = writeError instanceof Error ? writeError.message : String(writeError);
+      if (!descriptionMd) {
+        // description.md 保存前の失敗は部分書き込みではないため、そのまま返す。
+        throw new Error(raw);
+      }
+      const rollbackInfo = rollbackAttempted
+        ? rollbackSucceeded
+          ? "rollback=ok"
+          : `rollback=failed (${rollbackFailureReason ?? "unknown"})`
+        : "rollback=not-attempted";
+      throw new Error(`${raw} | partial-write: description.md saved then archive.json failed; ${rollbackInfo}`);
+    }
     return Response.json(
       {
         ok: true,
@@ -145,6 +176,7 @@ export async function action({ request }: ActionFunctionArgs) {
     );
   }
 }
+
 function formatIsoForJst(date: Date): string {
   const offsetMinutes = 9 * 60;
   const offsetMs = offsetMinutes * 60 * 1000;

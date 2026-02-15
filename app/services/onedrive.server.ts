@@ -40,6 +40,8 @@ export interface OneDriveService {
   saveText(path: string, content: string): Promise<DriveItem>;
   /** テキストを取得 */
   getText(path: string): Promise<string>;
+  /** 指定パスのファイル/フォルダを削除 */
+  deleteItem(path: string): Promise<void>;
   /** 現在のユーザー情報を取得 */
   getCurrentUser(): Promise<OneDriveUser>;
   /** 現在のドライブ情報を取得（セッション有効性確認に利用） */
@@ -210,6 +212,51 @@ async function graphText(accessToken: string, path: string, init?: RequestInit):
   return await response.text();
 }
 
+async function graphVoid(accessToken: string, path: string, init?: RequestInit): Promise<void> {
+  const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  if (response.ok) return;
+
+  let details = "";
+  let errorCode = "";
+  let errorMessage = "";
+  let requestMeta = "";
+  const responseText = await response.text();
+  try {
+    const json = JSON.parse(responseText) as GraphErrorResponse;
+    errorCode = json.error?.code ?? "";
+    errorMessage = json.error?.message ?? "";
+    details = errorMessage ? `: ${errorMessage}` : "";
+    const requestId =
+      json.error?.innerError?.["request-id"] ?? response.headers.get("request-id") ?? "";
+    const clientRequestId =
+      json.error?.innerError?.["client-request-id"] ??
+      response.headers.get("client-request-id") ??
+      "";
+    const date = json.error?.innerError?.date ?? response.headers.get("date") ?? "";
+    const meta = [
+      requestId ? `request-id=${requestId}` : "",
+      clientRequestId ? `client-request-id=${clientRequestId}` : "",
+      date ? `date=${date}` : "",
+    ].filter(Boolean);
+    requestMeta = meta.length > 0 ? ` [${meta.join(" ")}]` : "";
+  } catch {
+    const fallback = responseText.trim();
+    if (fallback) {
+      const summarized = fallback.length > 300 ? `${fallback.slice(0, 300)}...` : fallback;
+      details = `: ${summarized}`;
+    }
+  }
+  const codePart = errorCode ? ` [code=${errorCode}]` : "";
+  throw new Error(`OneDrive API error (${response.status})${codePart}${details}${requestMeta}`);
+}
+
 // 指定パスのドライブアイテムのメタデータを取得するユーティリティ
 async function getItemByPath(accessToken: string, path: string): Promise<GraphDriveItem> {
   // パスをエンコードしてAPIを呼び出す。これに成功すればアイテムの存在が確認できる。
@@ -334,6 +381,13 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
       return await graphText(auth.accessToken, `/me/drive/root:/${encoded}:/content`, {
         method: "GET",
       });
+    },
+    // アイテム削除ユーティリティ
+    async deleteItem(path: string): Promise<void> {
+      const normalized = normalizeDrivePath(path);
+      if (!normalized) throw new Error("OneDrive deleteItem: path is empty");
+      const encoded = encodeDrivePath(normalized);
+      await graphVoid(auth.accessToken, `/me/drive/root:/${encoded}:`, { method: "DELETE" });
     },
 
     // 現在のユーザー情報を取得するユーティリティ
