@@ -42,6 +42,19 @@ export type ApiCollectResponse =
       error: string;
     };
 
+function getHttpStatus(error: unknown): number | null {
+  if (error instanceof RequestError) return error.status;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof (error as { status?: unknown }).status === "number"
+  ) {
+    return (error as { status: number }).status;
+  }
+  return null;
+}
+
 export async function action({ request }: ActionFunctionArgs) {
   // フォームPOSTで受け取る（fetcher.submit からの送信もここに来る）
   const formData = await request.formData();
@@ -80,9 +93,10 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
-    // Octokit の RequestError からステータスコード別にユーザー向けメッセージを返す
-    if (error instanceof RequestError) {
-      const status = error.status;
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    // RequestError の型が崩れても、status が取れればユーザー向け文言へ変換する
+    const status = getHttpStatus(error);
+    if (status !== null) {
       switch (status) {
         case 401:
           return Response.json(
@@ -106,14 +120,13 @@ export async function action({ request }: ActionFunctionArgs) {
           );
         default:
           return Response.json(
-            { ok: false, error: `GitHub APIエラー (${status}): ${error.message}`, },
+            { ok: false, error: `GitHub APIエラー (${status}): ${errorMessage}`, },
             { status: 502 },
           );
       }
     }
-    const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json(
-      { ok: false, error: message } satisfies ApiCollectResponse,
+      { ok: false, error: errorMessage } satisfies ApiCollectResponse,
       { status: 502 },
     );
   }

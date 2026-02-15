@@ -26,7 +26,7 @@ map $http_upgrade $connection_upgrade {
 
 server {
     listen 5173 ssl;
-    server_name localhost 127.0.0.1;
+    server_name 127.0.0.1;
 
     # TLS 1.2+ only / 開発用でも古いプロトコルは無効化する
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -37,9 +37,19 @@ server {
 
     # Redirect 127.0.0.1 → localhost to keep OAuth redirect_uri stable
     # OAuth の redirect_uri を localhost に統一するため 127.0.0.1 をリダイレクト
-    if ($http_host ~* "^127\.0\.0\.1(:5173)?$") {
-        return 302 https://localhost:5173$request_uri;
-    }
+    return 302 https://localhost:5173$request_uri;
+}
+
+server {
+    listen 5173 ssl;
+    server_name localhost;
+
+    # TLS 1.2+ only / 開発用でも古いプロトコルは無効化する
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Provide your own PEM files. / 各自で用意した PEM ファイルのパスを指定する
+    ssl_certificate     /etc/nginx/certs/localhost+2.pem;
+    ssl_certificate_key /etc/nginx/certs/localhost+2-key.pem;
 
     location / {
         proxy_pass http://127.0.0.1:5174;

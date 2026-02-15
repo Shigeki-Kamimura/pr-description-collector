@@ -44,6 +44,19 @@ type ActionData =
   | { ok: true; description: string; result: Checklist }
   | { ok: false; error: string };
 
+function getHttpStatus(error: unknown): number | null {
+  if (error instanceof RequestError) return error.status;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof (error as { status?: unknown }).status === "number"
+  ) {
+    return (error as { status: number }).status;
+  }
+  return null;
+}
+
 export async function action({ request }: ActionFunctionArgs) {
   // owner/repo/prNumber からサーバー側でPR本文を取得して解析する。
   const formData = await request.formData();
@@ -71,9 +84,10 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
-    // Octokit の RequestError からステータスコード別にユーザー向けメッセージを返す
-    if (error instanceof RequestError) {
-      const status = error.status;
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    // RequestError の型が崩れても、status が取れればユーザー向け文言へ変換する
+    const status = getHttpStatus(error);
+    if (status !== null) {
       switch (status) {
         case 401:
           return Response.json(
@@ -97,15 +111,14 @@ export async function action({ request }: ActionFunctionArgs) {
           );
         default:
           return Response.json(
-            { ok: false, error: `GitHub APIエラー (${status}): ${error.message}` },
+            { ok: false, error: `GitHub APIエラー (${status}): ${errorMessage}` },
             { status: 502 },
           );
       }
     }
 
-    const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json(
-      { ok: false, error: message },
+      { ok: false, error: errorMessage },
       { status: 502 },
     );
   }
@@ -152,14 +165,14 @@ export default function Index() {
     try {
       const raw = window.sessionStorage.getItem("pr-ref"); // { owner, repo, prNumber }
       if (!raw) return;
+      // 復元の際、現在の入力値が空の場合のみ保存値で上書きする。これにより、OAuth復帰後もユーザーが入力した値を保持できる。
       const saved = JSON.parse(raw) as { owner?: string; repo?: string; prNumber?: string };
-      if (!owner && saved.owner) setOwner(saved.owner); // 現在の入力値が空の場合のみ復元
-      if (!repo && saved.repo) setRepo(saved.repo); // 同上
-      if (!prNumber && saved.prNumber) setPrNumber(saved.prNumber); // 同上
+      if (saved.owner) setOwner((prev) => prev || saved.owner || ""); // 現在の入力値が空の場合のみ復元
+      if (saved.repo) setRepo((prev) => prev || saved.repo || ""); // 同上
+      if (saved.prNumber) setPrNumber((prev) => prev || saved.prNumber || ""); // 同上
     } catch {
       // ignore
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 入力値が変わるたびに保存する
@@ -247,7 +260,7 @@ export default function Index() {
     const next = new URLSearchParams(searchParams);
     next.delete("onedrive");
     setSearchParams(next, { replace: true });
-  }, [onedriveConnected, searchParams, setSearchParams, sessionStatusFetcher]);
+  }, [onedriveConnected, searchParams, setSearchParams]);
 
   useEffect(() => {
     // OAuth復帰直後に実行したセッション確認が成功した時だけ、1回だけ表示する
@@ -297,9 +310,11 @@ export default function Index() {
             <p className="annotation-text-small">owner/repo/prNumber を正しく指定してください。</p>
           ) : null}
           {showCollectErrorAnnotation && collectError ? (
-            <p className="annotation-text-small">{"プルリクエストが見つかりませんでした。再度お試しください。"}</p>
+            // 取得エラー注釈
+            <p className="annotation-text-small">{collectError}</p>
           ) : null}
           {showParseErrorAnnotation && data && !data.ok ? (
+            // 解析エラー注釈
             <p className="annotation-text-small">{data.error}</p>
           ) : null}
         </div>

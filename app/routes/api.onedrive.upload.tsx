@@ -70,13 +70,8 @@ export async function action({ request }: ActionFunctionArgs) {
     // PR情報・レビュー情報取得
     const pullRequest = await github.getPullRequest(ref);
     const reviews = await github.getPullRequestReviews(ref);
-    // OneDriveの現在ユーザーは取得失敗しても保存処理を継続する
-    let currentUser: { userPrincipalName: string | null; displayName: string | null } | null = null;
-    try {
-      currentUser = await onedrive.getCurrentUser();
-    } catch {
-      currentUser = null;
-    }
+    // 監査要件: 保存実行者を特定できない場合は保存処理を中止する
+    const currentUser = await onedrive.getCurrentUser();
     // チェックリスト解析
     const checklist = parseChecklist(pullRequest.body);
 
@@ -87,16 +82,16 @@ export async function action({ request }: ActionFunctionArgs) {
     const latestApproved = approvedReviews[0] ?? null;
     const reviewer = latestApproved?.userLogin ?? "UNKNOWN";
     // アーカイブ実行者
-    const archivedBy =
-      currentUser?.userPrincipalName ??
-      currentUser?.displayName ??
-      "UNKNOWN";
+    const archivedBy = currentUser.userPrincipalName ?? currentUser.displayName ?? "UNKNOWN";
+    if (archivedBy === "UNKNOWN") {
+      throw new Error("OneDrive current user could not be identified.");
+    }
 
     // OneDriveへ保存
     const now = new Date();
     const archivedAtUtc = now.toISOString();
-    const archivedAt = formatIsoWithOffset(now, 9 * 60);
-    // フォルダパス例: pr-description-collector/owner/repo/pr-123
+    const archivedAt = formatIsoForJst(now);
+    // フォルダパス例: pr-description-collector/owner/repo/PullRequests/PR123-title
     const baseFolder = (process.env.ONEDRIVE_BASE_FOLDER ?? "project").replace(
       /^\/+|\/+$/g,
       "",
@@ -110,7 +105,7 @@ export async function action({ request }: ActionFunctionArgs) {
     // フォルダパスを組み立てる、安全なタイトルが空文字列になる場合は "untitled" を使う
     const safeTitle = rawSafeTitle.length > 0 ? rawSafeTitle : "untitled";
     const rootPrefix = workFolder ? `${workFolder}/${baseFolder}` : baseFolder;
-    const folderPath = `${rootPrefix}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
+    const folderPath = `${rootPrefix}/${owner}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
     // description.md 保存
     const descriptionMd = await onedrive.saveText(
       `${folderPath}/description.md`,
@@ -178,8 +173,9 @@ export async function action({ request }: ActionFunctionArgs) {
     );
   }
 }
-// 指定した分のオフセットを持つISO 8601形式の文字列を生成する
-function formatIsoWithOffset(date: Date, offsetMinutes: number): string {
+// JSTオフセットでISO 8601形式の文字列を生成する
+function formatIsoForJst(date: Date): string {
+  const offsetMinutes = 9 * 60;
   const offsetMs = offsetMinutes * 60 * 1000;
   const local = new Date(date.getTime() + offsetMs);
   const year = local.getUTCFullYear();
@@ -197,7 +193,7 @@ function formatIsoWithOffset(date: Date, offsetMinutes: number): string {
 
 function slugifyForPath(value: string): string {
   const normalized = value
-    .normalize("NFKD")
+    .normalize("NFC") // Unicode正規化で結合文字を統一する
     // OneDrive/Windowsで使えない文字のみ除外し、日本語などは保持する
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
     .trim()

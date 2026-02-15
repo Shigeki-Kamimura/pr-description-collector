@@ -129,8 +129,12 @@ async function graphJson<T>(accessToken: string, path: string, init?: RequestIni
     let errorMessage = ""; // Graph APIのエラーメッセージ
     let debug = ""; // 開発用デバッグ情報
     let requestMeta = ""; // request-id等の追跡情報
+    const responseText = await response.text();
     try {
-      const json = (await response.json()) as GraphErrorResponse; // エラー内容を解析
+      // Graph APIのエラー形式を解析して、エラーコードやメッセージ、リクエストIDなどの情報を抽出する。
+      const json = JSON.parse(responseText) as GraphErrorResponse; // エラー内容を解析
+      // エラーコードとメッセージを抽出する。
+      // これにより、エラーの原因をより具体的に把握できるようになる。
       errorCode = json.error?.code ?? "";
       errorMessage = json.error?.message ?? "";
       details = errorMessage ? `: ${errorMessage}` : "";
@@ -148,7 +152,11 @@ async function graphJson<T>(accessToken: string, path: string, init?: RequestIni
       ].filter(Boolean);
       requestMeta = meta.length > 0 ? ` [${meta.join(" ")}]` : "";
     } catch {
-      // ignore
+      const fallback = responseText.trim();
+      if (fallback) {
+        const summarized = fallback.length > 300 ? `${fallback.slice(0, 300)}...` : fallback;
+        details = `: ${summarized}`;
+      }
     }
     // 開発環境では401エラー時にトークン情報をデコードしてデバッグ情報を付与
     if (process.env.NODE_ENV !== "production" && response.status === 401) {
@@ -174,12 +182,20 @@ function tryDecodeJwt(token: string): { expIso?: string; aud?: string; scp?: str
     const payload = JSON.parse(payloadJson) as { exp?: number; aud?: string; scp?: string };
     const expIso = payload.exp ? new Date(payload.exp * 1000).toISOString() : undefined;
     return { expIso, aud: payload.aud, scp: payload.scp };
-  } catch {
+  } catch (error) {
+    // 開発環境ではデコード失敗の理由をログに出す。
+    // これにより、トークンの形式が予期せぬものになっている場合などの原因調査がしやすくなる。
+    if (process.env.NODE_ENV !== "production") {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Failed to decode JWT for debug logging: ${message}`);
+    }
     return null;
   }
 }
 
+// トークンストアにトークンを保存するユーティリティ
 async function graphText(accessToken: string, path: string, init?: RequestInit): Promise<string> {
+  // Graph APIを呼び出してテキストレスポンスを取得するユーティリティ
   const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
     ...init,
     headers: {
@@ -188,13 +204,16 @@ async function graphText(accessToken: string, path: string, init?: RequestInit):
     },
   });
 
+  // エラーハンドリング
   if (!response.ok) {
     throw new Error(`OneDrive API error (${response.status})`);
   }
   return await response.text();
 }
 
+// OneDrive APIを呼び出してテキストレスポンスを取得するユーティリティ
 async function getItemByPath(accessToken: string, path: string): Promise<GraphDriveItem> {
+  // パスをエンコードしてAPIを呼び出す。これに成功すればアイテムの存在が確認できる。
   const encoded = encodeDrivePath(path);
   // メタデータ取得は末尾コロンが必要
   return await graphJson<GraphDriveItem>(accessToken, `/me/drive/root:/${encoded}:`, {
@@ -202,6 +221,7 @@ async function getItemByPath(accessToken: string, path: string): Promise<GraphDr
   });
 }
 
+// フォルダを作成するユーティリティ
 async function createFolder(
   accessToken: string,
   parentId: "root" | DriveItemId,
@@ -212,12 +232,15 @@ async function createFolder(
     folder: {},
     "@microsoft.graph.conflictBehavior": "fail",
   };
-
+  // parentIdが "root" の場合はルート直下に作成する。
+  // それ以外は指定された親IDの下に作成する。これに成功すればフォルダが作成される。
   const path =
     parentId === "root"
       ? `/me/drive/root/children`
       : `/me/drive/items/${encodeURIComponent(parentId)}/children`;
 
+  // 返り値は作成されたフォルダの情報。
+  // これにより、次の階層の作成やファイルの保存に必要なIDやURLが得られる。
   return await graphJson<GraphDriveItem>(accessToken, path, {
     method: "POST",
     headers: {
@@ -227,17 +250,23 @@ async function createFolder(
   });
 }
 
+// 信頼できるホストの検証
 async function ensureFolderPath(accessToken: string, folderPath: string): Promise<void> {
+  // フォルダパスを正規化して分割し、階層ごとに存在確認と作成を行う。
   const normalized = normalizeDrivePath(folderPath);
   if (!normalized) return;
-
+  // フォルダパスを正規化して分割し、階層ごとに存在確認と作成を行う。
   const segments = normalized.split("/").filter(Boolean);
   let parentId: "root" | DriveItemId = "root";
   let currentPath = "";
 
+  // 各セグメントについて、存在確認と作成を行う。
+  // これにより、必要なフォルダ階層がすべて確実に存在するようになる。
   for (const segment of segments) {
+    // currentPathを更新する。これにより、エラー時のパス情報が正確になる。
     currentPath = currentPath ? `${currentPath}/${segment}` : segment;
 
+    // フォルダの存在確認をする。これに成功すれば次の階層へ進む。
     try {
       const existing = await getItemByPath(accessToken, currentPath);
       if (!existing.folder) {
@@ -246,12 +275,14 @@ async function ensureFolderPath(accessToken: string, folderPath: string): Promis
       parentId = existing.id;
       continue;
     } catch (error) {
+      // 404エラー以外はスローする。これにより、予期せぬエラーが見逃されるのを防ぐ。
       const message = error instanceof Error ? error.message : "";
       const isNotFound = message.includes("(404)");
       if (!isNotFound) throw error;
     }
 
     try {
+      // フォルダが存在しない場合は作成する。これに成功すればフォルダが作成される。
       const created = await createFolder(accessToken, parentId, segment);
       parentId = created.id;
     } catch (error) {
@@ -267,17 +298,20 @@ async function ensureFolderPath(accessToken: string, folderPath: string): Promis
 
 export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
   return {
+    // テキスト保存ユーティリティ
     async saveText(path: string, content: string): Promise<DriveItem> {
       const normalized = normalizeDrivePath(path);
       if (!normalized) throw new Error("OneDrive saveText: path is empty");
 
+      // フォルダパスを正規化して分割し、必要なフォルダ階層がすべて存在するようにする。
       const parts = normalized.split("/");
       const folderPath = parts.slice(0, -1).join("/");
       if (folderPath) {
         await ensureFolderPath(auth.accessToken, folderPath);
       }
-
+      // ファイルパスをエンコードしてAPIを呼び出す。これに成功すればファイルが保存される。
       const encoded = encodeDrivePath(normalized);
+      // コンテンツを保存する。これに成功すれば保存されたアイテムの情報が得られる。
       const item = await graphJson<GraphDriveItem>(
         auth.accessToken,
         `/me/drive/root:/${encoded}:/content`,
@@ -292,7 +326,7 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
 
       return toDriveItem(item);
     },
-
+    // テキスト取得ユーティリティ
     async getText(path: string): Promise<string> {
       // パス正規化とエンコード
       const normalized = normalizeDrivePath(path);
@@ -304,6 +338,7 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
       });
     },
 
+    // 現在のユーザー情報を取得するユーティリティ
     async getCurrentUser(): Promise<OneDriveUser> {
       const user = await graphJson<GraphUser>(auth.accessToken, "/me", { method: "GET" });
       return {
@@ -313,6 +348,7 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
       };
     },
 
+    // ドライブ情報を取得するユーティリティ
     async getDriveInfo(): Promise<OneDriveDriveInfo> {
       const drive = await graphJson<GraphDrive>(auth.accessToken, "/me/drive?$select=id,driveType", {
         method: "GET",

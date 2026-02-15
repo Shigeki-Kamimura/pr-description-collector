@@ -5,35 +5,13 @@
 
 // OAuth認可コードを受け取り、アクセストークンを取得して保存する
 import { redirect } from "react-router";
+import { isHttpsRequest } from "../services/https-validation.server";
 import {
   exchangeCodeForToken, // OneDrive OAuthトークン交換
   onedriveOAuthStateCookie, // OAuth状態管理用Cookie
   onedriveOAuthSessionCookie, // OAuthセッションID保持用Cookie
   storeTokenForSession, // セッションIDに対応するトークンを保存する
 } from "../services/onedrive-auth.server";
-
-function isHttpsRequest(request: Request): boolean {
-  const url = new URL(request.url);
-  if (url.protocol === "https:") return true;
-
-  const trustForwardedProto =
-    (process.env.ONEDRIVE_TRUST_X_FORWARDED_PROTO ?? "").toLowerCase() === "true" ||
-    process.env.ONEDRIVE_TRUST_X_FORWARDED_PROTO === "1";
-  if (!trustForwardedProto) return false;
-
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
-  if (forwardedProto !== "https") return false;
-
-  const host = request.headers.get("host")?.trim().toLowerCase();
-  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim().toLowerCase();
-  const trustedHosts = new Set(
-    (process.env.ONEDRIVE_TRUSTED_PROXY_HOSTS ?? "localhost:5173,127.0.0.1:5173")
-      .split(",")
-      .map((v) => v.trim().toLowerCase())
-      .filter(Boolean),
-  );
-  return Boolean(host && forwardedHost && host === forwardedHost && trustedHosts.has(host));
-}
 
 // コールバックURLのローダー
 export async function loader({ request }: { request: Request }) {

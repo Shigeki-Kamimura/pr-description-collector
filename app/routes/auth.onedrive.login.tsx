@@ -1,45 +1,12 @@
 /** 
  * OneDrive OAuthログイン用のルートローダー
 */
-
+// ローダー関数
 import { redirect } from "react-router";
+// HTTPSでのアクセスを要求する。
+// OneDrive OAuthはセキュアな環境でのみ動作するため、HTTPSでない場合はエラーレスポンスを返す。
+import { isHttpsRequest } from "../services/https-validation.server";
 import { buildAuthorizeUrl, onedriveOAuthStateCookie } from "../services/onedrive-auth.server";
-
-// コールバックURLのローダー
-function isHttpsRequest(request: Request): boolean {
-  // URLのプロトコルがHTTPSであるかを確認する。OneDrive OAuthはセキュアな環境でのみ動作する
-  // HTTPSでない場合はエラーレスポンスを返す。
-  const url = new URL(request.url);
-  if (url.protocol === "https:") return true;
-  // 環境変数でX-Forwarded-Protoを信頼する設定がある場合、ヘッダーを確認してHTTPSかどうかを判断する
-  const trustForwardedProto =
-    (process.env.ONEDRIVE_TRUST_X_FORWARDED_PROTO ?? "").toLowerCase() === "true" ||
-    process.env.ONEDRIVE_TRUST_X_FORWARDED_PROTO === "1";
-    // X-Forwarded-Protoを信頼する設定がない場合は、HTTPSでないと判断する
-  if (!trustForwardedProto) return false;
-
-  // X-Forwarded-Protoヘッダーを確認してHTTPSかどうかを判断する。
-  // これにより、リバースプロキシの背後で動作している場合でも正しくHTTPSを判定できるようになる。
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
-  // X-Forwarded-ProtoがHTTPSでない場合は、HTTPSでないと判断する
-  if (forwardedProto !== "https") return false;
-  // ホストが信頼できるプロキシからのものであることを確認する。
-  // これにより、X-Forwarded-Protoヘッダーのなりすましを防止する。
-  const host = request.headers.get("host")?.trim().toLowerCase();
-  // X-Forwarded-Hostヘッダーを確認して、リクエストが信頼できるプロキシからのものであることを確認する。
-  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim().toLowerCase();
-  // 信頼できるプロキシのホストを環境変数から取得する。
-  // これにより、リクエストが信頼できるプロキシからのものであることを確認する。
-  const trustedHosts = new Set(
-    (process.env.ONEDRIVE_TRUSTED_PROXY_HOSTS ?? "localhost:5173,127.0.0.1:5173")
-      .split(",")
-      .map((v) => v.trim().toLowerCase())
-      .filter(Boolean),
-  );
-  // ホストが信頼できるプロキシからのものであることを確認する。
-  // これにより、X-Forwarded-Protoヘッダーのなりすましを防止する。
-  return Boolean(host && forwardedHost && host === forwardedHost && trustedHosts.has(host));
-}
 
 // ローダー関数
 export async function loader({ request }: { request: Request }) {

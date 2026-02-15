@@ -28,7 +28,9 @@
 
 
 ## 動作確認（必須）
-- [ ] 
+- [ ] `npm test` が通る（該当機能の回帰テスト）
+- [ ] 通常系: `Get Description` → `Save to OneDrive` で `description.md` / `archive.json` を保存できる
+- [ ] 異常系: OneDrive認証失効時は `401` で停止し、保存処理が実行されない
 
 ## 関連（任意）
 - Issue: 

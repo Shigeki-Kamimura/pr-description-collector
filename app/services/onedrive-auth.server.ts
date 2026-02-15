@@ -6,12 +6,33 @@
   * - リフレッシュトークン対応
 **/
 
+// これらの関数は、OneDrive OAuthフローの実装に必要なユーティリティ関数やサービスを提供する。
+// 例えば、OAuthの認可URLを生成する関数や、トークンを交換する関数などが含まれる。
+// これらの関数は、認証ルートのローダーやアクションで利用される。
 import { createCookie } from "react-router";
 
-// Cookie署名用のシークレット（必須）
+// Cookie署名用のシークレット
 const sessionSecret = process.env.SESSION_SECRET ?? "";
-if (!sessionSecret) {
-  throw new Error("SESSION_SECRET が未設定です。Cookie署名のために必須です。");
+// 開発環境では固定のセッションシークレットを使用する。
+// これにより、ローカルでの開発が容易になる。
+const isProduction = process.env.NODE_ENV === "production";
+// 開発環境では固定のセッションシークレットを使用する。
+// これにより、ローカルでの開発が容易になる。
+const devFallbackSessionSecret = "dev-only-session-secret-change-me";
+// セッションシークレットを決定する。
+// production では環境変数が必須で、development ではフォールバックを許容する。
+const resolvedSessionSecret = sessionSecret || (!isProduction ? devFallbackSessionSecret : "");
+
+// セッションシークレットが未設定の場合はエラーを投げる。production では必須、development では警告を出す。
+if (!resolvedSessionSecret) {
+  throw new Error("SESSION_SECRET が未設定です。production では必須です。");
+}
+// 開発環境でセッションシークレットが未設定の場合は警告を出す。
+// これにより、開発者がセキュリティリスクを認識できるようになる。
+if (!sessionSecret && !isProduction) {
+  console.warn(
+    "SESSION_SECRET is not set. Falling back to a fixed development secret; set SESSION_SECRET explicitly for safer local usage.",
+  );
 }
 
 // Microsoft Entra ID (旧AAD) OAuth2エンドポイント
@@ -77,6 +98,14 @@ function enforceTokenStoreLimit() {
     tokenStore.delete(oldestKey);
   }
 }
+// トークンストアの管理関数
+function maintainTokenStore(now = Date.now()) {
+  // 期限切れかつリフレッシュ不能なセッションを削除する。
+  // これにより、無効なセッションが残らないようになる。
+  purgeExpiredUnrefreshableTokenSessions(now);
+  // セッション数が上限を超えていたら古いものから削除する。
+  enforceTokenStoreLimit();
+}
 
 // OAuth状態管理用Cookie
 export const onedriveOAuthStateCookie = createCookie("onedrive_oauth_state", {
@@ -85,7 +114,7 @@ export const onedriveOAuthStateCookie = createCookie("onedrive_oauth_state", {
   sameSite: "lax",
   maxAge: 60 * 5,
   secure: true, // HTTPS限定
-  secrets: [sessionSecret],
+  secrets: [resolvedSessionSecret],
 });
 
 // OAuthセッションID保持用Cookie
@@ -96,7 +125,7 @@ export const onedriveOAuthSessionCookie = createCookie("onedrive_oauth_session",
   sameSite: "lax",
   maxAge: 60 * 60 * 24 * 7,
   secure: true, // HTTPS限定
-  secrets: [sessionSecret],
+  secrets: [resolvedSessionSecret],
 });
 
 // 環境変数からOAuth設定を取得する
@@ -178,18 +207,20 @@ async function getSessionId(cookieHeader: string | null): Promise<string | null>
 
 export function storeTokenForSession(sessionId: string, cache: TokenCache) {
   // OAuth callback 直後に、セッションIDへ取得トークンを紐づける。
-  purgeExpiredUnrefreshableTokenSessions();
+  maintainTokenStore();
   // 既存キーを再挿入してMap末尾へ移動し、LRU順序を維持する。
   tokenStore.delete(sessionId);
   // セッションIDにトークンキャッシュを保存する。
   tokenStore.set(sessionId, cache);
-  // トークンストアの上限を超えていたら古いものから削除する。
-  enforceTokenStoreLimit();
+  // 追加後のサイズ超過を解消する。
+  maintainTokenStore();
 }
 
 function getTokenForSession(sessionId: string | null): TokenCache | null {
   if (!sessionId) return null;
-  purgeExpiredUnrefreshableTokenSessions();
+  // セッションIDに紐づくトークンキャッシュを取得する。
+  // これにより、APIリクエストなどでセッションに対応するトークンを利用できるようになる。
+  maintainTokenStore();
   const cache = tokenStore.get(sessionId);
   if (!cache) return null;
   // 参照したセッションを末尾へ移動し、最近利用順を更新する。
@@ -217,6 +248,7 @@ async function requestToken(params: URLSearchParams): Promise<TokenResponse> {
 
 // OneDrive Graph API関連ユーティリティ
 export async function exchangeCodeForToken(code: string): Promise<TokenCache> {
+  // コードをトークンに交換する。これに成功すればOAuthフローは完了する。
   ensureConfig();
   const params = new URLSearchParams({
     client_id: getClientId(),
@@ -226,25 +258,45 @@ export async function exchangeCodeForToken(code: string): Promise<TokenCache> {
     redirect_uri: getRedirectUri(),
     scope: SCOPES.join(" "),
   });
+  // 取得したトークンをキャッシュに変換する。
+  // これでアクセストークンとリフレッシュトークン、期限が得られる。
   const token = await requestToken(params);
+  // グローバルキャッシュを更新する。
+  // これにより、requestがない場面でもトークンを利用できるようになる。
   const nextCache = toTokenCache(token);
+  // グローバルキャッシュを更新する。
   tokenCache = nextCache;
   return nextCache;
 }
 
 // リフレッシュトークンでアクセストークンを更新する
-async function refreshAccessToken(refreshToken: string): Promise<TokenCache> {
+async function refreshAccessToken(
+  // リフレッシュトークンを使って新しいアクセストークンを取得する。
+  // これに成功すればセッションを継続できる。
+  refreshToken: string,
+  // オプション: グローバルキャッシュも更新するかどうか。デフォルトは true。
+  options: { updateGlobalCache?: boolean } = {},
+): Promise<TokenCache> {
+  // リフレッシュトークンを使って新しいアクセストークンを取得する。
+  const { updateGlobalCache = true } = options;
   ensureConfig();
+  // リフレッシュトークンを使って新しいアクセストークンを取得する。
   const params = new URLSearchParams({
-    client_id: getClientId(),
-    client_secret: getClientSecret(),
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    scope: SCOPES.join(" "),
+    client_id: getClientId(), // クライアントIDを環境変数から取得する。
+    client_secret: getClientSecret(), // クライアントシークレットを環境変数から取得する。
+    grant_type: "refresh_token", // グラントタイプはリフレッシュトークン
+    refresh_token: refreshToken, // リフレッシュトークンを指定する。
+    scope: SCOPES.join(" "), // スコープをスペース区切りで指定する。
   });
+  // 取得したトークンをキャッシュに変換する。
+  // これでアクセストークンとリフレッシュトークン、期限が得られる。
   const token = await requestToken(params);
+  // 取得したトークンをキャッシュに変換する。
   const nextCache = toTokenCache(token, refreshToken);
-  tokenCache = nextCache;
+  // グローバルキャッシュを更新する。
+  if (updateGlobalCache) {
+    tokenCache = nextCache;
+  }
   return nextCache;
 }
 
@@ -257,12 +309,14 @@ export async function getAccessToken(request?: Request): Promise<string> {
     const sessionToken = getTokenForSession(sessionId);
 
     if (sessionToken && sessionToken.expiresAt > Date.now()) {
-      tokenCache = sessionToken;
       return sessionToken.accessToken;
     }
 
     if (sessionToken?.refreshToken) {
-      const refreshed = await refreshAccessToken(sessionToken.refreshToken);
+      // セッションのリフレッシュトークンで更新を試みる。成功すればセッションを継続できる。
+      const refreshed = await refreshAccessToken(sessionToken.refreshToken, {
+        updateGlobalCache: false,
+      });
       if (sessionId) storeTokenForSession(sessionId, refreshed);
       return refreshed.accessToken;
     }
