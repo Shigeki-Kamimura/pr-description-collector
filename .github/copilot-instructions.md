@@ -32,8 +32,14 @@ When raising a BLOCKER, include:
 - failure path
 - impact
 - likelihood (High/Medium/Low)
+- evidence (file:line or reproducible steps)
+- concrete fix direction (what to change, briefly)
 
 Do not escalate speculative risks without a plausible failure path.
+
+### Applicability / N.A. Rule
+- If a checklist item is out of scope (e.g., SQL in non-SQL PR), mark it as `N/A` with one short reason.
+- Do not force low-value checks that do not apply to the change.
 
 ### Invariant Check (Mandatory)
 Identify invariants that must never be broken.
@@ -45,6 +51,12 @@ Step 1 — Identify potential BLOCKERS
 Step 2 — Try to falsify the design  
 Step 3 — Evaluate production risk  
 Step 4 — Suggest safer alternatives
+
+## Minimum Review Set by PR Type
+- Bug fix PR: Security, Correctness, Requirements, regression test coverage.
+- Feature PR: Security, Correctness, Requirements, Maintainability, docs update.
+- Refactor PR: Correctness (behavior parity), Maintainability, performance risk, test parity.
+- Infra/Config PR: Security, rollout/rollback safety, operational impact.
 
 
 
