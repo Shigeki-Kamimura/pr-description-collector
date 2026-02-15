@@ -10,14 +10,14 @@
 // 例えば、OAuthの認可URLを生成する関数や、トークンを交換する関数などが含まれる。
 // これらの関数は、認証ルートのローダーやアクションで利用される。
 import { createCookie } from "react-router";
-import { randomBytes } from "node:crypto";
 
 // Cookie署名用のシークレット
 const sessionSecret = process.env.SESSION_SECRET ?? "";
 const isProduction = process.env.NODE_ENV === "production";
-const generatedDevSessionSecret =
-  !sessionSecret && !isProduction ? randomBytes(32).toString("hex") : "";
-const resolvedSessionSecret = sessionSecret || generatedDevSessionSecret;
+const defaultDevSessionSecret =
+  "dev-session-secret-pr-description-collector-please-set-session-secret-explicitly";
+const usingDefaultDevSessionSecret = !sessionSecret && !isProduction;
+const resolvedSessionSecret = sessionSecret || (usingDefaultDevSessionSecret ? defaultDevSessionSecret : "");
 
 // セッションシークレットが未設定の場合はエラーを投げる。production では必須、development では警告を出す。
 if (!resolvedSessionSecret) {
@@ -25,9 +25,9 @@ if (!resolvedSessionSecret) {
 }
 // 開発環境でセッションシークレットが未設定の場合は警告を出す。
 // これにより、開発者がセキュリティリスクを認識できるようになる。
-if (generatedDevSessionSecret) {
+if (usingDefaultDevSessionSecret) {
   console.warn(
-    "SESSION_SECRET is not set. Using a random per-process development secret. OAuth cookies will be invalidated on server restart; set SESSION_SECRET explicitly for stable local sessions.",
+    "SESSION_SECRET が未設定のため、固定の開発用シークレットを使用しています。ローカルの安定運用のため、.env に SESSION_SECRET を明示設定してください。",
   );
 }
 
@@ -54,14 +54,29 @@ type TokenCache = {
   expiresAt: number;
 };
 
-// メモリ上のトークンキャッシュ（開発用）
-// request が無い場面でのフォールバックとして使う。
-let tokenCache: TokenCache | null = null;
 // セッションID => トークンキャッシュ（開発用）
 // Cookieにはトークン本体を入れず、セッションIDだけを保存して参照する。
+// Eviction 方針:
+// - Map の挿入順を利用した簡易 LRU。
+// - 参照(get)・更新(store)時に delete/set で末尾へ移動し、先頭を最も古い要素として扱う。
 const tokenStore = new Map<string, TokenCache>();
 // トークンストアの最大セッション数（開発用）
 const DEFAULT_TOKEN_STORE_MAX_SESSIONS = 500;
+const allowInMemoryTokenStoreInProduction =
+  (process.env.ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION ?? "").toLowerCase() === "true" ||
+  process.env.ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION === "1";
+
+if (isProduction && !allowInMemoryTokenStoreInProduction) {
+  throw new Error(
+    "本番環境でメモリ内 tokenStore は使用できません。Redis/DB などの永続ストアを実装するか、" +
+      "一時的に ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true を設定してください。",
+  );
+}
+if (isProduction && allowInMemoryTokenStoreInProduction) {
+  console.warn(
+    "本番環境でメモリ内 tokenStore を許可しています。プロセス再起動・スケールアウト時に OAuth セッションは失われます。",
+  );
+}
 
 // トークンストアの最大セッション数を環境変数から取得する
 // 返り値: 正の整数（未設定/不正値の場合はデフォルト値を返す）
@@ -254,18 +269,11 @@ export async function exchangeCodeForToken(code: string): Promise<TokenCache> {
     scope: SCOPES.join(" "),
   });
   const token = await requestToken(params);
-  const nextCache = toTokenCache(token);
-  // request がない呼び出し経路向けに、グローバルキャッシュへも反映する。
-  tokenCache = nextCache;
-  return nextCache;
+  return toTokenCache(token);
 }
 
-// リフレッシュトークンでアクセストークンを更新し、必要に応じてグローバルキャッシュへ反映する。
-async function refreshAccessToken(
-  refreshToken: string,
-  options: { updateGlobalCache?: boolean } = {},
-): Promise<TokenCache> {
-  const { updateGlobalCache = true } = options;
+// リフレッシュトークンでアクセストークンを更新する。
+async function refreshAccessToken(refreshToken: string): Promise<TokenCache> {
   ensureConfig();
   const params = new URLSearchParams({
     client_id: getClientId(),
@@ -275,11 +283,7 @@ async function refreshAccessToken(
     scope: SCOPES.join(" "),
   });
   const token = await requestToken(params);
-  const nextCache = toTokenCache(token, refreshToken);
-  if (updateGlobalCache) {
-    tokenCache = nextCache;
-  }
-  return nextCache;
+  return toTokenCache(token, refreshToken);
 }
 
 // 有効なアクセストークンを取得する
@@ -296,9 +300,7 @@ export async function getAccessToken(request?: Request): Promise<string> {
 
     if (sessionToken?.refreshToken) {
       // セッションのリフレッシュトークンで更新を試みる。成功すればセッションを継続できる。
-      const refreshed = await refreshAccessToken(sessionToken.refreshToken, {
-        updateGlobalCache: false,
-      });
+      const refreshed = await refreshAccessToken(sessionToken.refreshToken);
       if (sessionId) storeTokenForSession(sessionId, refreshed);
       return refreshed.accessToken;
     }
@@ -306,18 +308,8 @@ export async function getAccessToken(request?: Request): Promise<string> {
     throw new Error("OneDrive OAuth token がありません。/auth/onedrive/login で認証してください。");
   }
 
-  // requestなし（サーバー内部利用）時のみ、グローバルキャッシュを参照する。
-  if (tokenCache && tokenCache.expiresAt > Date.now()) {
-    return tokenCache.accessToken;
-  }
-
-  // リフレッシュトークンで更新を試みる
-  // refresh時もセッション側を優先する。
-  const refreshToken = tokenCache?.refreshToken;
-  if (refreshToken) {
-    const refreshed = await refreshAccessToken(refreshToken);
-    if (refreshed.accessToken) return refreshed.accessToken;
-  }
-
-  throw new Error("OneDrive OAuth token がありません。/auth/onedrive/login で認証してください。");
+  throw new Error(
+    "request なし経路では OneDrive OAuth token を解決できません。request 付きで呼び出すか、" +
+      "ONEDRIVE_ACCESS_TOKEN を設定してください。",
+  );
 }

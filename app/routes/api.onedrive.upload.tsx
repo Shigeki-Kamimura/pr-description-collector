@@ -208,6 +208,24 @@ function slugifyForPath(value: string): string {
     .replace(/-+/g, "-")
     .replace(/^[-.\s]+|[-.\s]+$/g, "");
 
-  // サロゲートペアを壊さないよう、コードポイント単位で上限を適用する。
-  return Array.from(normalized).slice(0, 80).join("");
+  // サロゲートペアを壊さず、かつ過度に長いマルチバイト文字列を避けるため、
+  // コードポイント数と UTF-8 バイト長の両方で上限を適用する。
+  const maxCodePoints = 80;
+  const maxUtf8Bytes = 160;
+  const encoder = new TextEncoder();
+  let result = "";
+  let codePointCount = 0;
+  let utf8ByteCount = 0;
+
+  for (const char of normalized) {
+    const charBytes = encoder.encode(char).length;
+    if (codePointCount + 1 > maxCodePoints || utf8ByteCount + charBytes > maxUtf8Bytes) {
+      break;
+    }
+    result += char;
+    codePointCount += 1;
+    utf8ByteCount += charBytes;
+  }
+
+  return result;
 }

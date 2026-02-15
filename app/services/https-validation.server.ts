@@ -29,11 +29,16 @@ export function isHttpsRequest(request: Request): boolean {
 
   const host = request.headers.get("host")?.trim().toLowerCase();
   const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim().toLowerCase();
+  if (!host || !forwardedHost) return false;
+  // プロキシ経由で Forwarded ヘッダーを信頼する場合は、
+  // Host と X-Forwarded-Host の一致を必須にしてヘッダー偽装の影響を抑える。
+  if (host !== forwardedHost) return false;
+
   const trustedHosts = new Set(
     (process.env.ONEDRIVE_TRUSTED_PROXY_HOSTS ?? "localhost:5173,127.0.0.1:5173")
       .split(",")
       .map((v) => v.trim().toLowerCase())
       .filter(Boolean),
   );
-  return Boolean(host && forwardedHost && host === forwardedHost && trustedHosts.has(host));
+  return trustedHosts.has(host);
 }

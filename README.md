@@ -20,6 +20,7 @@ A modern, production-ready template for building full-stack React applications u
 - GitHub: `GITHUB_TOKEN`（または `GITHUB_PAT` / `GITHUB_APP_*`）
 - OneDrive: `ONEDRIVE_ACCESS_TOKEN`（開発用・`/me/drive` を操作できるトークン）
 - OneDrive OAuth（サーバーサイド）: `ONEDRIVE_TENANT` / `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` / `ONEDRIVE_REDIRECT_URI`
+- OneDrive OAuth token store: `ONEDRIVE_TOKEN_STORE_MAX_SESSIONS`（任意）/ `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION`（非推奨の暫定フラグ）
 - OneDrive 保存先: `ONEDRIVE_BASE_FOLDER`（任意）/ `ONEDRIVE_WORK_FOLDER`（任意）
 - `SESSION_SECRET` は production で必須（development 未設定時は固定フォールバックあり、明示設定推奨）
 - 開発サーバー: `DEV_SERVER_HOST` / `DEV_SERVER_PORT`（ViteはHTTPで待受。利用者アクセスはHTTPS終端を必須とする）
