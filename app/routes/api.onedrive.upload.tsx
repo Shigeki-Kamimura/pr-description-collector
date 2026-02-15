@@ -91,7 +91,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const now = new Date();
     const archivedAtUtc = now.toISOString();
     const archivedAt = formatIsoForJst(now);
-    // フォルダパス例: pr-description-collector/owner/repo/PullRequests/PR123-title
+    // フォルダパス例: project/repo/PullRequests/PR123-title
     const baseFolder = (process.env.ONEDRIVE_BASE_FOLDER ?? "project").replace(
       /^\/+|\/+$/g,
       "",
@@ -105,7 +105,7 @@ export async function action({ request }: ActionFunctionArgs) {
     // フォルダパスを組み立てる、安全なタイトルが空文字列になる場合は "untitled" を使う
     const safeTitle = rawSafeTitle.length > 0 ? rawSafeTitle : "untitled";
     const rootPrefix = workFolder ? `${workFolder}/${baseFolder}` : baseFolder;
-    const folderPath = `${rootPrefix}/${owner}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
+    const folderPath = `${rootPrefix}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
     // description.md 保存
     const descriptionMd = await onedrive.saveText(
       `${folderPath}/description.md`,
