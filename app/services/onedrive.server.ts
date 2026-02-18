@@ -346,7 +346,10 @@ async function ensureFolderPath(accessToken: string, folderPath: string): Promis
       const created = await createFolder(accessToken, parentId, segment);
       parentId = created.id;
     } catch (createError) {
-      // 競合などが起きた場合は再取得して進める
+      // 競合 (409) の場合のみ再取得して進める。
+      if (!(createError instanceof OneDriveApiError) || createError.status !== 409) {
+        throw createError;
+      }
       try {
         const existing = await getItemByPath(accessToken, currentPath);
         if (!existing.folder) {

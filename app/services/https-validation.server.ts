@@ -6,7 +6,16 @@
  * X-Forwarded-Proto / X-Forwarded-Host も考慮して判定する。
  *
  * auth.onedrive.login / auth.onedrive.callback の両ルートで共通利用する。
+ * 
+ * 共有シークレットを設定した環境では、プロキシからの正当な転送のみ許可する。
  */
+import { createHash, timingSafeEqual } from "node:crypto";
+
+function secureEquals(left: string, right: string): boolean {
+  const leftDigest = createHash("sha256").update(left, "utf8").digest();
+  const rightDigest = createHash("sha256").update(right, "utf8").digest();
+  return timingSafeEqual(leftDigest, rightDigest);
+}
 
 export function isHttpsRequest(request: Request): boolean {
   const url = new URL(request.url);
@@ -24,7 +33,7 @@ export function isHttpsRequest(request: Request): boolean {
   const sharedSecret = process.env.ONEDRIVE_TRUST_PROXY_SHARED_SECRET ?? "";
   if (sharedSecret) {
     const provided = request.headers.get("x-onedrive-proxy-secret") ?? "";
-    if (provided !== sharedSecret) return false;
+    if (!secureEquals(provided, sharedSecret)) return false;
   }
 
   const host = request.headers.get("host")?.trim().toLowerCase();
