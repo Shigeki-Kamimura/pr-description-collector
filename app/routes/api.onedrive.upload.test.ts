@@ -1,0 +1,198 @@
+/**
+ * OneDriveアップロードAPIルートのテスト
+ *
+ * このファイルを用意した理由:
+ * - 保存処理の失敗分岐（部分書き込み時のロールバック）と認証エラー判定を固定し、
+ *   本番運用での回帰を防ぐため。
+ *
+ * このファイルが使われる場面:
+ * - `npm run test` 実行時に、`/api/onedrive/upload` のエラーハンドリング契約を検証するとき。
+ */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { action } from "./api.onedrive.upload";
+import { createGitHubServiceFromEnv } from "../services/github.server";
+import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
+import { parseChecklist } from "../services/checklist";
+import { validatePrRefInput } from "../services/validation";
+
+vi.mock("../services/github.server", () => ({
+  createGitHubServiceFromEnv: vi.fn(),
+}));
+
+vi.mock("../services/onedrive.server", () => ({
+  createOneDriveServiceFromEnv: vi.fn(),
+}));
+
+vi.mock("../services/checklist", () => ({
+  parseChecklist: vi.fn(),
+}));
+
+vi.mock("../services/validation", () => ({
+  validatePrRefInput: vi.fn(),
+}));
+
+type MockGitHubService = {
+  getPullRequest: ReturnType<typeof vi.fn>;
+  getPullRequestReviews: ReturnType<typeof vi.fn>;
+};
+
+type MockOneDriveService = {
+  getDriveInfo: ReturnType<typeof vi.fn>;
+  getCurrentUser: ReturnType<typeof vi.fn>;
+  saveText: ReturnType<typeof vi.fn>;
+  deleteItem: ReturnType<typeof vi.fn>;
+};
+
+function buildRequest(): Request {
+  const form = new FormData();
+  form.set("owner", "octocat");
+  form.set("repo", "hello-world");
+  form.set("prNumber", "123");
+  return new Request("http://localhost/api/onedrive/upload", { method: "POST", body: form });
+}
+
+describe("api.onedrive.upload action", () => {
+  let github: MockGitHubService;
+  let onedrive: MockOneDriveService;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    vi.mocked(validatePrRefInput).mockReturnValue({
+      ok: true,
+      owner: "octocat",
+      repo: "hello-world",
+      prNumber: 123,
+    });
+    vi.mocked(parseChecklist).mockReturnValue({ items: [], checked: 0, total: 0 });
+
+    github = {
+      getPullRequest: vi.fn().mockResolvedValue({
+        number: 123,
+        title: "Test PR",
+        url: "https://github.com/octocat/hello-world/pull/123",
+        body: "- [x] done",
+        authorLogin: "author",
+        mergedByLogin: "merger",
+      }),
+      getPullRequestReviews: vi.fn().mockResolvedValue([]),
+    };
+    vi.mocked(createGitHubServiceFromEnv).mockResolvedValue(github as never);
+
+    onedrive = {
+      getDriveInfo: vi.fn().mockResolvedValue({ id: "drive-1", driveType: "business" }),
+      getCurrentUser: vi.fn().mockResolvedValue({
+        id: "user-1",
+        displayName: "Display Name",
+        userPrincipalName: "user@example.com",
+      }),
+      saveText: vi.fn(),
+      deleteItem: vi.fn(),
+    };
+    vi.mocked(createOneDriveServiceFromEnv).mockResolvedValue(onedrive as never);
+  });
+
+  it("archive保存失敗後にロールバック成功なら partial-write と rollback=ok を返す", async () => {
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockRejectedValueOnce(new Error("archive write failed"));
+    onedrive.deleteItem.mockResolvedValue(undefined);
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; error: string };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("partial-write");
+    expect(body.error).toContain("rollback=ok");
+    expect(onedrive.deleteItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("archive保存失敗後にロールバック失敗なら rollback=failed を返す", async () => {
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockRejectedValueOnce(new Error("archive write failed"));
+    onedrive.deleteItem.mockRejectedValue(new Error("delete failed"));
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; error: string };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("rollback=failed");
+    expect(body.error).toContain("delete failed");
+  });
+
+  it("OneDrive認証エラーを 401 / isAuthError=true で返す", async () => {
+    onedrive.getDriveInfo.mockRejectedValue(
+      new Error("OneDrive API error (401) [code=InvalidAuthenticationToken]: token expired"),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; isAuthError: boolean; error: string };
+
+    expect(response.status).toBe(401);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(true);
+    expect(body.error).toContain("InvalidAuthenticationToken");
+  });
+
+  it("成功時に folderPath と uploaded 情報を返す", async () => {
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: true;
+      folderPath: string;
+      uploaded: {
+        descriptionMd: { name: string; webUrl: string };
+        archiveJson: { name: string; webUrl: string };
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.folderPath).toContain("project/hello-world/PullRequests/PR123-Test-PR");
+    expect(body.uploaded.descriptionMd).toEqual({
+      name: "description.md",
+      webUrl: "https://example.com/desc",
+    });
+    expect(body.uploaded.archiveJson).toEqual({
+      name: "archive.json",
+      webUrl: "https://example.com/archive",
+    });
+    expect(onedrive.saveText).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      status: 401,
+      expected: "GitHub認証に失敗しました。トークンを確認してください。",
+    },
+    {
+      status: 403,
+      expected: "アクセスが拒否されました。権限またはレート制限を確認してください。",
+    },
+    {
+      status: 404,
+      expected: "指定されたPRが見つかりません。owner/repo/prNumber を確認してください。",
+    },
+    {
+      status: 429,
+      expected: "レート制限のため一時的に失敗しました。しばらくしてから再実行してください。",
+    },
+  ])("GitHub API error $status を適切なメッセージで返す", async ({ status, expected }) => {
+    const githubError = Object.assign(new Error(`github error ${status}`), { status });
+    github.getPullRequest.mockRejectedValue(githubError);
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; error: string; isAuthError: boolean };
+
+    expect(response.status).toBe(status);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe(expected);
+    expect(body.isAuthError).toBe(false);
+  });
+});

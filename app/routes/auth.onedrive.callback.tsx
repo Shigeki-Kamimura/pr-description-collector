@@ -13,6 +13,10 @@ import {
   storeTokenForSession, // セッションIDに対応するトークンを保存する
 } from "../services/onedrive-auth.server";
 
+function buildOAuthRetryMessage(): string {
+  return "OneDrive 認証に失敗しました。Connect OneDrive から再試行してください。";
+}
+
 // コールバックURLのローダー
 export async function loader({ request }: { request: Request }) {
   if (!isHttpsRequest(request)) {
@@ -30,10 +34,16 @@ export async function loader({ request }: { request: Request }) {
   const errorCodes = url.searchParams.get("error_codes");
 
   if (error) {
+    // 詳細はサーバーログに残し、クライアントには再試行可能な定型メッセージのみ返す。
+    console.warn("OneDrive OAuth callback returned an error.", {
+      error,
+      errorDescription,
+      errorCodes,
+    });
     return new Response(
-      `OneDrive OAuth error: ${error}${errorDescription ? ` (${errorDescription})` : ""}${
-        errorCodes ? ` [codes: ${errorCodes}]` : ""
-      }`,
+      errorCodes
+        ? `${buildOAuthRetryMessage()} [codes: ${errorCodes}]`
+        : buildOAuthRetryMessage(),
       { status: 400 },
     );
   }
@@ -60,7 +70,9 @@ export async function loader({ request }: { request: Request }) {
     tokenCache = await exchangeCodeForToken(code);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return new Response(`OneDrive OAuth token error: ${message}`, { status: 500 });
+    // token交換失敗の詳細はサーバーログのみで扱う。
+    console.error("OneDrive OAuth token exchange failed.", { message });
+    return new Response(buildOAuthRetryMessage(), { status: 500 });
   }
   const sessionId = crypto.randomUUID();
   storeTokenForSession(sessionId, tokenCache);

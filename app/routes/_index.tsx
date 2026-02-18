@@ -33,6 +33,30 @@ export const meta = () => [{ title: "PR Description Collector" }];
 type ActionData =
   | { ok: true; description: string; result: Checklist }
   | { ok: false; error: string };
+// owner/repo/prNumber を表す型とユーティリティ関数
+type PrRefInput = {
+  owner: string;
+  repo: string;
+  prNumber: string;
+};
+
+// 入力値の正規化（前後の空白を削除）
+function normalizePrRef(value: PrRefInput): PrRefInput {
+  return {
+    owner: value.owner.trim(),
+    repo: value.repo.trim(),
+    prNumber: value.prNumber.trim(),
+  };
+}
+
+function isSamePrRef(left: PrRefInput | null, right: PrRefInput): boolean {
+  if (!left) return false;
+  return (
+    left.owner === right.owner &&
+    left.repo === right.repo &&
+    left.prNumber === right.prNumber
+  );
+}
 
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
@@ -113,6 +137,13 @@ export default function Index() {
   const [showPrRefAnnotation, setShowPrRefAnnotation] = useState(false);
   const [showCollectErrorAnnotation, setShowCollectErrorAnnotation] = useState(false);
   const [showParseErrorAnnotation, setShowParseErrorAnnotation] = useState(false);
+  const [pendingCollectRef, setPendingCollectRef] = useState<PrRefInput | null>(null);
+  const [lastCollectedRef, setLastCollectedRef] = useState<PrRefInput | null>(null);
+
+  const currentPrRef = useMemo(
+    () => normalizePrRef({ owner, repo, prNumber }),
+    [owner, repo, prNumber],
+  );
 
   const descriptionText = useMemo(() => {
     if (collectFetcher.data?.ok) return collectFetcher.data.description;
@@ -197,6 +228,16 @@ export default function Index() {
   }, [uploadFetcher.data]);
 
   useEffect(() => {
+    if (collectFetcher.state !== "idle") return;
+    if (collectFetcher.data?.ok && pendingCollectRef) {
+      setLastCollectedRef(pendingCollectRef);
+    }
+    if (pendingCollectRef) {
+      setPendingCollectRef(null);
+    }
+  }, [collectFetcher.state, collectFetcher.data, pendingCollectRef]);
+
+  useEffect(() => {
     if (!onedriveConnected) return;
     setIsCheckingOneDriveSession(true);
     sessionStatusFetcher.load("/api/onedrive/session-status");
@@ -232,6 +273,8 @@ export default function Index() {
     return descriptionText ? markdown.render(descriptionText) : "";
   }, [descriptionText, markdown]);
 
+  const isSaveTargetInSync = isSamePrRef(lastCollectedRef, currentPrRef);
+
   return (
     <main id="main-content" className="container">
       <h1 id="page-title" className="page-title">PR Description Collector</h1>
@@ -247,6 +290,9 @@ export default function Index() {
           ) : null}
           {showCollectErrorAnnotation && collectError ? (
             <p className="annotation-text-small">{collectError}</p>
+          ) : null}
+          {collectFetcher.data?.ok && !isSaveTargetInSync ? (
+            <p className="annotation-text-small">入力を変更したため、再度 Get Description が必要です。</p>
           ) : null}
           {showParseErrorAnnotation && data && !data.ok ? (
             <p className="annotation-text-small">{data.error}</p>
@@ -292,6 +338,8 @@ export default function Index() {
               type="button"
               className="btn"
               onClick={() => {
+                const submittedRef = normalizePrRef({ owner, repo, prNumber });
+                setPendingCollectRef(submittedRef);
                 if (!owner || !repo || !prNumber) {
                   setShowPrRefAnnotation(true);
                 } else {
@@ -332,7 +380,8 @@ export default function Index() {
               disabled={
                 uploadFetcher.state !== "idle" ||
                 collectFetcher.state !== "idle" ||
-                !collectFetcher.data?.ok
+                !collectFetcher.data?.ok ||
+                !isSaveTargetInSync
               }
             >
               Save to OneDrive
