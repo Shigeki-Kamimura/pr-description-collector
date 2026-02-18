@@ -13,6 +13,7 @@ import {
   createGitHubServiceFromEnv,
   type PullRequestRef,
 } from "../services/github.server";
+import { getHttpStatus } from "../services/http-status";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
 import { parseChecklist } from "../services/checklist";
@@ -45,17 +46,21 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   const { owner, repo, prNumber } = validation;
 
+  let failureDomain: "github" | "onedrive" = "github";
   try {
     const github = await createGitHubServiceFromEnv();
+    failureDomain = "onedrive";
     const onedrive = await createOneDriveServiceFromEnv(request);
     // 保存処理の前に OneDrive セッションの有効性を検証する。
     await onedrive.getDriveInfo();
+    failureDomain = "github";
     const ref: PullRequestRef = {
       repo: { owner, name: repo },
       number: prNumber,
     };
     const pullRequest = await github.getPullRequest(ref);
     const reviews = await github.getPullRequestReviews(ref);
+    failureDomain = "onedrive";
     // 保存実行者を特定できない場合は監査要件のため保存を中止する。
     const currentUser = await onedrive.getCurrentUser();
     const checklist = parseChecklist(pullRequest.body);
@@ -159,6 +164,67 @@ export async function action({ request }: ActionFunctionArgs) {
     );
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : "Unknown error";
+    if (failureDomain === "github") {
+      const status = getHttpStatus(error);
+      if (status !== null) {
+        switch (status) {
+          case 401:
+            return Response.json(
+              {
+                ok: false,
+                error: "GitHub認証に失敗しました。トークンを確認してください。",
+                isAuthError: false,
+              } satisfies ApiOneDriveUploadResponse,
+              { status: 401 },
+            );
+          case 403:
+            return Response.json(
+              {
+                ok: false,
+                error: "アクセスが拒否されました。権限またはレート制限を確認してください。",
+                isAuthError: false,
+              } satisfies ApiOneDriveUploadResponse,
+              { status: 403 },
+            );
+          case 404:
+            return Response.json(
+              {
+                ok: false,
+                error: "指定されたPRが見つかりません。owner/repo/prNumber を確認してください。",
+                isAuthError: false,
+              } satisfies ApiOneDriveUploadResponse,
+              { status: 404 },
+            );
+          case 429:
+            return Response.json(
+              {
+                ok: false,
+                error: "レート制限のため一時的に失敗しました。しばらくしてから再実行してください。",
+                isAuthError: false,
+              } satisfies ApiOneDriveUploadResponse,
+              { status: 429 },
+            );
+          default:
+            return Response.json(
+              {
+                ok: false,
+                error: `GitHub APIエラー (${status}): ${rawMessage}`,
+                isAuthError: false,
+              } satisfies ApiOneDriveUploadResponse,
+              { status: 502 },
+            );
+        }
+      }
+      return Response.json(
+        {
+          ok: false,
+          error: rawMessage,
+          isAuthError: false,
+        } satisfies ApiOneDriveUploadResponse,
+        { status: 502 },
+      );
+    }
+
     const parsed = extractOneDriveError(rawMessage);
     let message = rawMessage;
     if (isOneDriveAuthLikeError(rawMessage)) {

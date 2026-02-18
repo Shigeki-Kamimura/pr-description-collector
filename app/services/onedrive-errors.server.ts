@@ -18,10 +18,14 @@ export function extractOneDriveError(rawMessage: string): { code?: string; messa
 }
 // OneDriveの認証エラーと推測されるかどうかを判定する関数
 export function isOneDriveAuthLikeError(rawMessage: string): boolean {
+  const message = rawMessage.toLowerCase();
   return (
-    rawMessage.includes("OAuth token") ||
-    rawMessage.includes("認証") ||
-    rawMessage.includes("OneDrive API error (401)") ||
-    rawMessage.includes("OneDrive API error (403)")
+    message.includes("onedrive oauth token") ||
+    message.includes("onedrive oauth error") ||
+    message.includes("onedrive api error (401)") ||
+    message.includes("onedrive api error (403)") ||
+    message.includes("[code=invalidauthenticationtoken]") ||
+    message.includes("[code=accesstokenhasexpired]") ||
+    message.includes("[code=accessdenied]")
   );
 }

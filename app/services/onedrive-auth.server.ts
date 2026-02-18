@@ -65,17 +65,28 @@ const DEFAULT_TOKEN_STORE_MAX_SESSIONS = 500;
 const allowInMemoryTokenStoreInProduction =
   (process.env.ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION ?? "").toLowerCase() === "true" ||
   process.env.ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION === "1";
-
-if (isProduction && !allowInMemoryTokenStoreInProduction) {
-  throw new Error(
-    "本番環境でメモリ内 tokenStore は使用できません。Redis/DB などの永続ストアを実装するか、" +
-      "一時的に ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true を設定してください。",
-  );
+let warnedInMemoryTokenStoreInProduction = false;
+// OAuth設定が完了しているか確認する
+function isOneDriveOAuthConfigured(): boolean {
+  return Boolean(process.env.ONEDRIVE_CLIENT_ID && process.env.ONEDRIVE_CLIENT_SECRET && process.env.ONEDRIVE_REDIRECT_URI);
 }
-if (isProduction && allowInMemoryTokenStoreInProduction) {
-  console.warn(
-    "本番環境でメモリ内 tokenStore を許可しています。プロセス再起動・スケールアウト時に OAuth セッションは失われます。",
-  );
+// 本番環境でメモリ内トークンストアの使用が許可されているか確認する
+function ensureInMemoryTokenStoreAllowedForCurrentEnv() {
+  if (!isProduction) return;
+  // OneDrive OAuth を使わないデプロイでは、起動不能にしない。
+  if (!isOneDriveOAuthConfigured()) return;
+  if (!allowInMemoryTokenStoreInProduction) {
+    throw new Error(
+      "本番環境でメモリ内 tokenStore は使用できません。Redis/DB などの永続ストアを実装するか、" +
+        "一時的に ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true を設定してください。",
+    );
+  }
+  if (!warnedInMemoryTokenStoreInProduction) {
+    warnedInMemoryTokenStoreInProduction = true;
+    console.warn(
+      "本番環境でメモリ内 tokenStore を許可しています。プロセス再起動・スケールアウト時に OAuth セッションは失われます。",
+    );
+  }
 }
 
 // トークンストアの最大セッション数を環境変数から取得する
@@ -111,6 +122,7 @@ function enforceTokenStoreLimit() {
 }
 // トークンストアの管理関数
 function maintainTokenStore(now = Date.now()) {
+  ensureInMemoryTokenStoreAllowedForCurrentEnv();
   // 期限切れかつリフレッシュ不能なセッションを削除する。
   // これにより、無効なセッションが残らないようになる。
   purgeExpiredUnrefreshableTokenSessions(now);

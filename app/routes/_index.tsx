@@ -365,7 +365,7 @@ export default function Index() {
       <section id="rendered-description-section" className="result-section">
         <h2>Description (Rendered)</h2>
         {collectFetcher.data?.ok ? (
-          <p>Fetched Pullrequest Title: <span className="fetched-pr-title">{collectFetcher.data.pullRequest.title}</span></p>
+          <p>Fetched Pull Request Title: <span className="fetched-pr-title">{collectFetcher.data.pullRequest.title}</span></p>
         ) : null}
         {renderedDescriptionHtml ? (
           <details open>
