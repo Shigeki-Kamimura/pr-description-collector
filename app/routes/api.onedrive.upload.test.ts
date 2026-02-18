@@ -195,4 +195,29 @@ describe("api.onedrive.upload action", () => {
     expect(body.error).toBe(expected);
     expect(body.isAuthError).toBe(false);
   });
+
+  it("GitHub 5xx はリトライ前提の定型メッセージで返す", async () => {
+    const githubError = Object.assign(new Error("github internal error"), { status: 500 });
+    github.getPullRequest.mockRejectedValue(githubError);
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; error: string; isAuthError: boolean };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("GitHub API への接続に失敗しました。しばらくしてから再実行してください。");
+    expect(body.isAuthError).toBe(false);
+  });
+
+  it("GitHub ネットワークエラー（statusなし）も定型メッセージで返す", async () => {
+    github.getPullRequest.mockRejectedValue(new Error("socket hang up"));
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; error: string; isAuthError: boolean };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("GitHub API への接続に失敗しました。しばらくしてから再実行してください。");
+    expect(body.isAuthError).toBe(false);
+  });
 });

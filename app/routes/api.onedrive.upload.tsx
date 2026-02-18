@@ -208,7 +208,7 @@ export async function action({ request }: ActionFunctionArgs) {
             return Response.json(
               {
                 ok: false,
-                error: `GitHub APIエラー (${status}): ${rawMessage}`,
+                error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。",
                 isAuthError: false,
               } satisfies ApiOneDriveUploadResponse,
               { status: 502 },
@@ -218,7 +218,7 @@ export async function action({ request }: ActionFunctionArgs) {
       return Response.json(
         {
           ok: false,
-          error: rawMessage,
+          error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。",
           isAuthError: false,
         } satisfies ApiOneDriveUploadResponse,
         { status: 502 },

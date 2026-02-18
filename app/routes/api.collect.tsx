@@ -101,13 +101,13 @@ export async function action({ request }: ActionFunctionArgs) {
           );
         default:
           return Response.json(
-            { ok: false, error: `GitHub APIエラー (${status}): ${errorMessage}`, },
+            { ok: false, error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。", },
             { status: 502 },
           );
       }
     }
     return Response.json(
-      { ok: false, error: errorMessage } satisfies ApiCollectResponse,
+      { ok: false, error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。" } satisfies ApiCollectResponse,
       { status: 502 },
     );
   }

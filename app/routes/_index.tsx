@@ -8,7 +8,7 @@ import type { ApiCollectResponse } from "./api.collect";
 import type { ApiOneDriveUploadResponse } from "./api.onedrive.upload";
 import type { ApiOneDriveSessionStatusResponse } from "./api.onedrive.session-status";
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
-import { validatePrRefInput } from "../services/validation";
+import { INVALID_PR_REF_ERROR, validatePrRefFields, validatePrRefInput } from "../services/validation";
 import { getHttpStatus } from "../services/http-status";
 
 import { OneDriveAuthDialog } from "../components/OneDriveAuthDialog";
@@ -109,14 +109,14 @@ export async function action({ request }: ActionFunctionArgs) {
           );
         default:
           return Response.json(
-            { ok: false, error: `GitHub APIエラー (${status}): ${errorMessage}` },
+            { ok: false, error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。" },
             { status: 502 },
           );
       }
     }
 
     return Response.json(
-      { ok: false, error: errorMessage },
+      { ok: false, error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。" },
       { status: 502 },
     );
   }
@@ -134,6 +134,7 @@ export default function Index() {
   const [repo, setRepo] = useState("");
   const [prNumber, setPrNumber] = useState("");
   const [evidenceByLine, setEvidenceByLine] = useState<Record<number, string>>({});
+  const [resultComment, setResultComment] = useState("");
   const [showPrRefAnnotation, setShowPrRefAnnotation] = useState(false);
   const [showCollectErrorAnnotation, setShowCollectErrorAnnotation] = useState(false);
   const [showParseErrorAnnotation, setShowParseErrorAnnotation] = useState(false);
@@ -142,6 +143,10 @@ export default function Index() {
 
   const currentPrRef = useMemo(
     () => normalizePrRef({ owner, repo, prNumber }),
+    [owner, repo, prNumber],
+  );
+  const prRefValidation = useMemo(
+    () => validatePrRefFields(owner, repo, prNumber),
     [owner, repo, prNumber],
   );
 
@@ -182,6 +187,9 @@ export default function Index() {
       ? uploadFetcher.data.error
       : null;
   }, [uploadFetcher.data]);
+  const uploadValidationError = useMemo(() => {
+    return uploadError === INVALID_PR_REF_ERROR ? uploadError : null;
+  }, [uploadError]);
 
   const sessionStatusError = useMemo(() => {
     return sessionStatusFetcher.data && !sessionStatusFetcher.data.ok
@@ -195,7 +203,7 @@ export default function Index() {
   const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false);
   const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false);
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
-  const effectiveError = uploadError ?? sessionStatusError;
+  const effectiveError = (uploadError && uploadError !== INVALID_PR_REF_ERROR ? uploadError : null) ?? sessionStatusError;
   const isAuthError =
     (uploadFetcher.data && !uploadFetcher.data.ok && uploadFetcher.data.isAuthError) ||
     (sessionStatusFetcher.data &&
@@ -286,10 +294,15 @@ export default function Index() {
             <p className="annotation-text">Get Description を押してから保存してください。</p>
           ) : null}
           {showPrRefAnnotation ? (
-            <p className="annotation-text-small">owner/repo/prNumber を正しく指定してください。</p>
+            <p className="annotation-text-small">
+              {!prRefValidation.ok ? prRefValidation.error : "owner/repo/prNumber を正しく指定してください。"}
+            </p>
           ) : null}
           {showCollectErrorAnnotation && collectError ? (
             <p className="annotation-text-small">{collectError}</p>
+          ) : null}
+          {uploadValidationError ? (
+            <p className="annotation-text-small">{uploadValidationError}</p>
           ) : null}
           {collectFetcher.data?.ok && !isSaveTargetInSync ? (
             <p className="annotation-text-small">入力を変更したため、再度 Get Description が必要です。</p>
@@ -338,13 +351,13 @@ export default function Index() {
               type="button"
               className="btn"
               onClick={() => {
+                if (!prRefValidation.ok) {
+                  setShowPrRefAnnotation(true);
+                  return;
+                }
                 const submittedRef = normalizePrRef({ owner, repo, prNumber });
                 setPendingCollectRef(submittedRef);
-                if (!owner || !repo || !prNumber) {
-                  setShowPrRefAnnotation(true);
-                } else {
-                  setShowPrRefAnnotation(false);
-                }
+                setShowPrRefAnnotation(false);
                 setShowCollectErrorAnnotation(true);
                 collectFetcher.submit(
                   { owner, repo, prNumber },
@@ -354,7 +367,7 @@ export default function Index() {
               disabled={
                 collectFetcher.state !== "idle" ||
                 uploadFetcher.state !== "idle" ||
-                !owner || !repo || !prNumber
+                !prRefValidation.ok
               }
             >
               Get Description
@@ -367,8 +380,9 @@ export default function Index() {
               type="button"
               className="btn"
               onClick={() => {
-                if (!owner || !repo || !prNumber) {
+                if (!prRefValidation.ok) {
                   setShowPrRefAnnotation(true);
+                  return;
                 } else {
                   setShowPrRefAnnotation(false);
                 }
@@ -394,9 +408,10 @@ export default function Index() {
               <button
                 type="submit"
                 className="btn"
-                disabled={!owner || !repo || !prNumber}
-                onClick={() => {
-                  if (!owner || !repo || !prNumber) {
+                disabled={!prRefValidation.ok}
+                onClick={(e) => {
+                  if (!prRefValidation.ok) {
+                    e.preventDefault();
                     setShowPrRefAnnotation(true);
                   } else {
                     setShowPrRefAnnotation(false);
@@ -457,6 +472,16 @@ export default function Index() {
               </li>
             ))}
           </ul>
+          <label>
+            <span className="form-label">Checklist Result Comment (optional)</span>
+            <textarea
+              className="input-contents basic-block"
+              value={resultComment}
+              onChange={(e) => setResultComment(e.target.value)}
+              placeholder="レビュー補足があれば入力してください"
+              rows={3}
+            />
+          </label>
         </section>
       )}
       <OneDriveAuthDialog
