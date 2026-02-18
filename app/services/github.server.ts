@@ -114,11 +114,18 @@ export async function createGitHubServiceFromEnv(): Promise<GitHubService> {
   const installationIdRaw = process.env.GITHUB_APP_INSTALLATION_ID ?? "";
   const privateKeyRaw = process.env.GITHUB_APP_PRIVATE_KEY ?? "";
 
-  const appId = Number(appIdRaw);
-  const installationId = Number(installationIdRaw);
+  const appId = Number.parseInt(appIdRaw, 10);
+  const installationId = Number.parseInt(installationIdRaw, 10);
   const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
 
-  if (!Number.isFinite(appId) || !Number.isFinite(installationId) || !privateKey) {
+  const isValidAppAuth =
+    Number.isSafeInteger(appId) &&
+    appId > 0 &&
+    Number.isSafeInteger(installationId) &&
+    installationId > 0 &&
+    privateKey.length > 0;
+
+  if (!isValidAppAuth) {
     throw new Error(
       "GitHub認証情報が未設定です。GITHUB_TOKEN/GITHUB_PAT または GITHUB_APP_ID/GITHUB_APP_INSTALLATION_ID/GITHUB_APP_PRIVATE_KEY を設定してください",
     );
