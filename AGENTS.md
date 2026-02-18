@@ -64,6 +64,11 @@ If TECH_STACK_JP is empty:
 # Core Priorities
 ############################################################
 
+Follow docs/coding-rules.md strictly.
+If conflicts arise:
+- coding-rules.md overrides default best practices.
+- Follow repository conventions over general patterns.
+
 Accuracy > reproducibility > maintainability > ease > speed
 
 Always prefer:
