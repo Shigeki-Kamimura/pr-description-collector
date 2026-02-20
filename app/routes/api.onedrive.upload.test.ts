@@ -124,7 +124,7 @@ describe("api.onedrive.upload action", () => {
     expect(response.status).toBe(502);
     expect(body.ok).toBe(false);
     expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
-    expect(onedrive.deleteItem).toHaveBeenCalledTimes(1);
+    expect(onedrive.deleteItem).toHaveBeenCalledTimes(2);
   });
 
   it("archive保存失敗後にロールバック失敗時も内部詳細を露出せず定型メッセージを返す", async () => {
@@ -139,6 +139,26 @@ describe("api.onedrive.upload action", () => {
     expect(response.status).toBe(502);
     expect(body.ok).toBe(false);
     expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
+  });
+
+  it("archive保存失敗後のフォルダ削除失敗は警告ログのみで処理継続する", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockRejectedValueOnce(new Error("archive write failed"));
+    onedrive.deleteItem
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("folder not empty"));
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; error: string };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
+    expect(onedrive.deleteItem).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it("OneDrive認証エラーを 401 / isAuthError=true で返す", async () => {

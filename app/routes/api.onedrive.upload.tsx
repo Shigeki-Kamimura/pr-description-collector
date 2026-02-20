@@ -108,9 +108,11 @@ export async function action({ request }: ActionFunctionArgs) {
     // description.md と archive.json の両方を保存する。description.md の保存に成功してから archive.json の保存に失敗した場合は、description.md を削除するロールバックを試みる。
     let descriptionMd: { name: string; webUrl: string } | null = null;
     let archiveJson: { name: string; webUrl: string } | null = null;
+    // ロールバックの試行状況と結果を記録する変数。これにより、部分的に成功した状態で失敗した場合の状況を詳細にログに残せるようになる。
     let rollbackAttempted = false;
     let rollbackSucceeded = false;
     let rollbackFailureReason = "unknown";
+    let rollbackFolderCleanup = "not-attempted";
 
     try {
       failureDomain = "onedrive"; // 明示的に失敗ドメインを切り替える。ここで失敗した場合はロールバックの必要はないため、以降は failureDomain を変更しない。
@@ -146,6 +148,18 @@ export async function action({ request }: ActionFunctionArgs) {
         try {
           await onedrive.deleteItem(descriptionPath);
           rollbackSucceeded = true;
+          // description.md の削除後、空フォルダが残らないようにフォルダ削除も試みる。
+          try {
+            await onedrive.deleteItem(folderPath);
+            rollbackFolderCleanup = "ok";
+          } catch (folderCleanupError) {
+            const reason = folderCleanupError instanceof Error ? folderCleanupError.message : String(folderCleanupError);
+            rollbackFolderCleanup = `failed (${reason.trim() || "unknown"})`;
+            console.warn("OneDrive rollback folder cleanup skipped.", {
+              folderPath,
+              reason,
+            });
+          }
         } catch (rollbackError) {
           rollbackSucceeded = false;
           const reason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
@@ -160,7 +174,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       const rollbackInfo = rollbackAttempted
         ? rollbackSucceeded
-          ? "rollback=ok"
+          ? `rollback=ok folderCleanup=${rollbackFolderCleanup}`
           : `rollback=failed (${rollbackFailureReason})`
         : "rollback=not-attempted";
       throw new Error(`${raw} | partial-write: description.md saved then archive.json failed; ${rollbackInfo}`);
