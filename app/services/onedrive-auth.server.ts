@@ -140,6 +140,16 @@ export const onedriveOAuthStateCookie = createCookie("onedrive_oauth_state", {
   secrets: [resolvedSessionSecret],
 });
 
+// OAuth開始時とcallback時のブラウザ整合性を確認する短期バインドCookie
+export const onedriveOAuthBindCookie = createCookie("onedrive_oauth_bind", {
+  httpOnly: true,
+  path: "/",
+  sameSite: "lax",
+  maxAge: 60 * 5,
+  secure: true,
+  secrets: [resolvedSessionSecret],
+});
+
 // OAuthセッションID保持用Cookie
 // 値は tokenStore のキーとして利用する。
 export const onedriveOAuthSessionCookie = createCookie("onedrive_oauth_session", {

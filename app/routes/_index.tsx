@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import { parseChecklist, summarize, type Checklist } from "../services/checklist";
+import { isSamePrRef, normalizePrRef, type PrRefInput } from "../services/pr-ref";
 import type { ApiCollectResponse } from "./api.collect";
 import type { ApiOneDriveUploadResponse } from "./api.onedrive.upload";
 import type { ApiOneDriveSessionStatusResponse } from "./api.onedrive.session-status";
@@ -33,30 +34,6 @@ export const meta = () => [{ title: "PR Description Collector" }];
 type ActionData =
   | { ok: true; description: string; result: Checklist }
   | { ok: false; error: string };
-// owner/repo/prNumber を表す型とユーティリティ関数
-type PrRefInput = {
-  owner: string;
-  repo: string;
-  prNumber: string;
-};
-
-// 入力値の正規化（前後の空白を削除）
-function normalizePrRef(value: PrRefInput): PrRefInput {
-  return {
-    owner: value.owner.trim(),
-    repo: value.repo.trim(),
-    prNumber: value.prNumber.trim(),
-  };
-}
-
-function isSamePrRef(left: PrRefInput | null, right: PrRefInput): boolean {
-  if (!left) return false;
-  return (
-    left.owner === right.owner &&
-    left.repo === right.repo &&
-    left.prNumber === right.prNumber
-  );
-}
 
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();

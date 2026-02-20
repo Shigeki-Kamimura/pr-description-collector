@@ -7,6 +7,7 @@
 import { redirect } from "react-router";
 import { isHttpsRequest } from "../services/https-validation.server";
 import {
+  onedriveOAuthBindCookie, // OAuth開始時バインドCookie
   exchangeCodeForToken, // OneDrive OAuthトークン交換
   onedriveOAuthStateCookie, // OAuth状態管理用Cookie
   onedriveOAuthSessionCookie, // OAuthセッションID保持用Cookie
@@ -58,9 +59,25 @@ export async function loader({ request }: { request: Request }) {
   } catch {
     storedState = null;
   }
+  let bindIdFromCookie: string | null = null;
+  try {
+    bindIdFromCookie = (await onedriveOAuthBindCookie.parse(cookieHeader)) as string | null;
+  } catch {
+    bindIdFromCookie = null;
+  }
 
-  // state と code の検証
-  if (!code || !state || !storedState || state !== storedState) {
+  const bindIdFromState = state?.split(".")[0] ?? null;
+
+  // state と code の検証（state一致 + bind cookie一致）
+  if (
+    !code ||
+    !state ||
+    !storedState ||
+    state !== storedState ||
+    !bindIdFromCookie ||
+    !bindIdFromState ||
+    bindIdFromCookie !== bindIdFromState
+  ) {
     return new Response("Invalid OAuth state or code.", { status: 400 });
   }
 
@@ -80,6 +97,7 @@ export async function loader({ request }: { request: Request }) {
   // stateクッキーをクリアしてリダイレクト
   const headers = new Headers();
   headers.append("Set-Cookie", await onedriveOAuthStateCookie.serialize("", { maxAge: 0 }));
+  headers.append("Set-Cookie", await onedriveOAuthBindCookie.serialize("", { maxAge: 0 }));
   headers.append("Set-Cookie", await onedriveOAuthSessionCookie.serialize(sessionId));
   return redirect("/?onedrive=connected", { headers });
 }

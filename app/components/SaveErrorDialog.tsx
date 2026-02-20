@@ -4,44 +4,10 @@
 
 import { useEffect, useRef } from "react";
 
-function formatPartialWriteErrorMessage(error: string): string | null {
+export function formatPartialWriteErrorMessage(error: string): string | null {
   if (!error.includes("partial-write:")) return null;
-
-  const [rawPart] = error.split("| partial-write:");
-  const raw = (rawPart ?? "").trim();
-
-  const rollbackMatch = error.match(
-    /rollback=(ok|failed|not-attempted)(?:\s*\(([^)]*)\))?/,
-  );
-  if (!rollbackMatch && import.meta.env.DEV) {
-    console.warn("formatPartialWriteErrorMessage: rollback status parse failed", { error });
-  }
-  const rollbackStatus = rollbackMatch?.[1] ?? "unknown";
-  const rollbackDetail = rollbackMatch?.[2] ?? null;
-
-  const lines: string[] = ["OneDrive への保存中に途中で失敗しました（部分書き込み）。"];
-  if (rollbackStatus === "ok") {
-    lines.push("自動ロールバック（description.md の削除）に成功しました。");
-  } else if (rollbackStatus === "failed") {
-    lines.push("自動ロールバックに失敗しました。");
-    lines.push(
-      "OneDrive 上に description.md が残っている可能性があります。フォルダを確認して削除してから、保存をやり直してください。",
-    );
-    if (rollbackDetail) {
-      lines.push(`ロールバック失敗理由: ${rollbackDetail}`);
-    }
-  } else if (rollbackStatus === "not-attempted") {
-    lines.push("自動ロールバックは実行されていません。");
-  } else {
-    lines.push("自動ロールバックの結果が不明です。");
-  }
-
-  if (raw) {
-    lines.push("");
-    lines.push(`詳細: ${raw}`);
-  }
-
-  return lines.join("\n");
+  // セキュリティ上の理由で、内部処理状態や詳細理由はUIに表示しない。
+  return "保存に失敗しました。再試行してください。解決しない場合は管理者にお問い合わせください。";
 }
 
 // 保存エラーダイアログのプロパティ

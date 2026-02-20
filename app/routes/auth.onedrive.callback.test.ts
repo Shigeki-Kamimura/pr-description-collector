@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./auth.onedrive.callback";
 import {
   exchangeCodeForToken,
+  onedriveOAuthBindCookie,
   onedriveOAuthStateCookie,
 } from "../services/onedrive-auth.server";
 
@@ -20,6 +21,10 @@ vi.mock("../services/onedrive-auth.server", () => ({
   onedriveOAuthStateCookie: {
     parse: vi.fn(),
     serialize: vi.fn(async () => "state=; Max-Age=0"),
+  },
+  onedriveOAuthBindCookie: {
+    parse: vi.fn(),
+    serialize: vi.fn(async () => "bind=; Max-Age=0"),
   },
   onedriveOAuthSessionCookie: {
     serialize: vi.fn(async () => "session=test"),
@@ -48,6 +53,7 @@ describe("auth.onedrive.callback loader", () => {
 
   it("token交換失敗時に内部詳細をレスポンスへ露出しない", async () => {
     vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("state-1");
+    vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("state-1");
     vi.mocked(exchangeCodeForToken).mockRejectedValue(new Error("sensitive-token-error"));
 
     const request = new Request(
@@ -61,5 +67,21 @@ describe("auth.onedrive.callback loader", () => {
     expect(response.status).toBe(500);
     expect(body).toBe("OneDrive 認証に失敗しました。Connect OneDrive から再試行してください。");
     expect(body).not.toContain("sensitive-token-error");
+  });
+
+  it("stateとbind cookieの整合が取れない場合は400で拒否する", async () => {
+    vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("bind-a.nonce-1");
+    vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("bind-b");
+
+    const request = new Request(
+      "https://localhost:5173/auth/onedrive/callback?code=test-code&state=bind-a.nonce-1",
+      { headers: { Cookie: "onedrive_oauth_state=stub; onedrive_oauth_bind=stub" } },
+    );
+
+    const response = await loader({ request });
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).toBe("Invalid OAuth state or code.");
   });
 });

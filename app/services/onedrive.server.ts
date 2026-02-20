@@ -140,7 +140,6 @@ async function graphJson<T>(accessToken: string, path: string, init?: RequestIni
     let details = ""; // 追加の詳細情報
     let errorCode = ""; // Graph APIのエラーコード
     let errorMessage = ""; // Graph APIのエラーメッセージ
-    let debug = ""; // 開発用デバッグ情報
     let requestMeta = ""; // request-id等の追跡情報
     const responseText = await response.text();
     try {
@@ -171,45 +170,15 @@ async function graphJson<T>(accessToken: string, path: string, init?: RequestIni
         details = `: ${summarized}`;
       }
     }
-    // 開発環境では401エラー時にトークン情報をデコードしてデバッグ情報を付与
-    if (process.env.NODE_ENV !== "production" && response.status === 401) {
-      const info = tryDecodeJwt(accessToken);
-      if (info) {
-        debug = ` (token exp=${info.expIso ?? "n/a"} aud=${info.aud ?? "n/a"} scp=${info.scp ?? "n/a"})`;
-      }
-    }
     const codePart = errorCode ? ` [code=${errorCode}]` : ""; // エラーコード部分
     throw new OneDriveApiError(
-      `OneDrive API error (${response.status})${codePart}${details}${requestMeta}${debug}`,
+      `OneDrive API error (${response.status})${codePart}${details}${requestMeta}`,
       response.status,
       errorCode || undefined,
     );
   }
 
   return (await response.json()) as T;
-}
-
-// JWTトークンをデコードしてペイロード情報を取得する（失敗したらnullを返す）
-function tryDecodeJwt(token: string): { expIso?: string; aud?: string; scp?: string } | null {
-  const parts = token.split(".");
-  if (parts.length < 2) return null;
-  try {
-    const base64url = parts[1].replace(/-/g, "+").replace(/_/g, "/"); // Base64URL -> Base64
-    const padLength = (4 - (base64url.length % 4)) % 4;
-    const base64 = `${base64url}${"=".repeat(padLength)}`;
-    const payloadJson = Buffer.from(base64, "base64").toString("utf8"); // デコード
-    const payload = JSON.parse(payloadJson) as { exp?: number; aud?: string; scp?: string };
-    const expIso = payload.exp ? new Date(payload.exp * 1000).toISOString() : undefined;
-    return { expIso, aud: payload.aud, scp: payload.scp };
-  } catch (error) {
-    // 開発環境ではデコード失敗の理由をログに出す。
-    // これにより、トークンの形式が予期せぬものになっている場合などの原因調査がしやすくなる。
-    if (process.env.NODE_ENV !== "production") {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`Failed to decode JWT for debug logging: ${message}`);
-    }
-    return null;
-  }
 }
 
 // Graph APIを呼び出してテキストレスポンスを取得するユーティリティ
