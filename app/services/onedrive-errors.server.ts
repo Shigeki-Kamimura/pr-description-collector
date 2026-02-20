@@ -11,9 +11,14 @@ export function extractOneDriveError(rawMessage: string): { code?: string; messa
   const messageMatch = rawMessage.match(
     /OneDrive API error \(\d+\)(?: \[code=[^\]]+\])?:\s*([^()]+?)(?:\s+\(token|$)/,
   );
+  const extractedMessage = messageMatch?.[1]?.trim();
+  const sanitizedMessage = extractedMessage?.replace(
+    /\s+\[(?=[^\]]*(?:request-id|client-request-id|date)=)[^\]]+\]\s*$/i,
+    "",
+  ).trim();
   return {
     code: codeMatch?.[1],
-    message: messageMatch?.[1]?.trim(),
+    message: sanitizedMessage,
   };
 }
 // OneDriveの認証エラーと推測されるかどうかを判定する関数
