@@ -99,9 +99,26 @@ function enforceTokenStoreLimit() {
   const limit = getTokenStoreMaxSessions();
   // 上限を超えていたら古いものから削除
   while (tokenStore.size > limit) {
-    const oldestKey = tokenStore.keys().next().value as string | undefined;
-    if (!oldestKey) break;
-    tokenStore.delete(oldestKey);
+    // 可能なら refresh 不可セッションを優先的に削除して、再利用可能なセッションを温存する。
+    let candidateKey: string | undefined;
+    // tokenStore は Map なので、entries() の順序は挿入順（LRU順）になっている。
+    // 先頭から走査して、最初に見つかった refreshToken がないセッションを削除候補とする。
+    let evictionReason: "non_refreshable_first" | "oldest_fallback" = "oldest_fallback";
+    for (const [key, value] of tokenStore.entries()) {
+      if (!candidateKey) candidateKey = key;
+      if (!value.refreshToken) {
+        candidateKey = key;
+        evictionReason = "non_refreshable_first";
+        break;
+      }
+    }
+    if (!candidateKey) break;
+    tokenStore.delete(candidateKey);
+    console.warn("OneDrive tokenStore evicted a session due to size limit.", {
+      limit,
+      sizeAfterEviction: tokenStore.size,
+      evictionReason,
+    });
   }
 }
 // トークンストアの管理関数
