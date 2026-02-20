@@ -60,6 +60,8 @@ type TokenCache = {
 // - Map の挿入順を利用した簡易 LRU。
 // - 参照(get)・更新(store)時に delete/set で末尾へ移動し、先頭を最も古い要素として扱う。
 const tokenStore = new Map<string, TokenCache>();
+// 同一セッションでの同時refreshを1回に集約する。
+const refreshInFlightBySession = new Map<string, Promise<TokenCache>>();
 // トークンストアの最大セッション数（開発用）
 const DEFAULT_TOKEN_STORE_MAX_SESSIONS = 500;
 const allowInMemoryTokenStoreInProduction =
@@ -307,6 +309,22 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenCache> {
   const token = await requestToken(params);
   return toTokenCache(token, refreshToken);
 }
+// セッションIDとリフレッシュトークンを使ってアクセストークンを更新する。複数リクエストの同時更新を防止する。
+async function refreshAccessTokenForSession(sessionId: string, refreshToken: string): Promise<TokenCache> {
+  const inFlight = refreshInFlightBySession.get(sessionId);
+  if (inFlight) return inFlight;
+
+  const refreshPromise = (async () => {
+    const refreshed = await refreshAccessToken(refreshToken);
+    storeTokenForSession(sessionId, refreshed);
+    return refreshed;
+  })().finally(() => {
+    refreshInFlightBySession.delete(sessionId);
+  });
+
+  refreshInFlightBySession.set(sessionId, refreshPromise);
+  return refreshPromise;
+}
 
 // 有効なアクセストークンを取得する
 export async function getAccessToken(request?: Request): Promise<string> {
@@ -322,8 +340,9 @@ export async function getAccessToken(request?: Request): Promise<string> {
 
     if (sessionToken?.refreshToken) {
       // セッションのリフレッシュトークンで更新を試みる。成功すればセッションを継続できる。
-      const refreshed = await refreshAccessToken(sessionToken.refreshToken);
-      if (sessionId) storeTokenForSession(sessionId, refreshed);
+      const refreshed = sessionId
+        ? await refreshAccessTokenForSession(sessionId, sessionToken.refreshToken)
+        : await refreshAccessToken(sessionToken.refreshToken);
       return refreshed.accessToken;
     }
 

@@ -58,7 +58,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   const { owner, repo, prNumber } = validation;
 
-  let failureDomain: "github" | "onedrive" = "github";
+  let failureDomain: "github" | "onedrive" | "internal" = "github";
   try {
     const github = await createGitHubServiceFromEnv();
     failureDomain = "onedrive";
@@ -75,6 +75,7 @@ export async function action({ request }: ActionFunctionArgs) {
     failureDomain = "onedrive";
     // 保存実行者を特定できない場合は監査要件のため保存を中止する。
     const currentUser = await onedrive.getCurrentUser();
+    failureDomain = "internal";
     const checklist = parseChecklist(pullRequest.body);
 
     const approvedReviews = reviews
@@ -112,6 +113,7 @@ export async function action({ request }: ActionFunctionArgs) {
     let rollbackFailureReason = "unknown";
 
     try {
+      failureDomain = "onedrive"; // 明示的に失敗ドメインを切り替える。ここで失敗した場合はロールバックの必要はないため、以降は failureDomain を変更しない。
       descriptionMd = await onedrive.saveText(descriptionPath, pullRequest.body);
       archiveJson = await onedrive.saveText(
         archivePath,
@@ -234,6 +236,17 @@ export async function action({ request }: ActionFunctionArgs) {
           isAuthError: false,
         } satisfies ApiOneDriveUploadResponse,
         { status: 502 },
+      );
+    }
+    // OneDrive への保存処理中のエラーは、認証エラーかどうかに関わらず基本的には 502 として返す。ただし、認証エラーと判断できる場合は 401 とする。
+    if (failureDomain === "internal") {
+      return Response.json(
+        {
+          ok: false,
+          error: "保存処理中に予期しないエラーが発生しました。しばらくしてから再実行してください。",
+          isAuthError: false,
+        } satisfies ApiOneDriveUploadResponse,
+        { status: 500 },
       );
     }
 

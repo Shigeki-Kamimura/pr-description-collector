@@ -65,8 +65,11 @@ export async function loader({ request }: { request: Request }) {
   } catch {
     bindIdFromCookie = null;
   }
-
-  const bindIdFromState = state?.split(".")[0] ?? null;
+  // stateの形式は "bindId.nonce" としているため、stateからbindIdを抽出するロジック。
+  const stateSeparatorIndex = state?.indexOf(".") ?? -1;
+  const hasValidStateSeparator =
+    stateSeparatorIndex > 0 && stateSeparatorIndex < (state?.length ?? 0) - 1;
+  const bindIdFromState = hasValidStateSeparator ? state!.slice(0, stateSeparatorIndex) : null;
 
   // state と code の検証（state一致 + bind cookie一致）
   if (

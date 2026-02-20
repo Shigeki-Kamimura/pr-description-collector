@@ -157,6 +157,21 @@ describe("api.onedrive.upload action", () => {
     expect(body.error).toContain("InvalidAuthenticationToken");
   });
 
+  it("parseChecklist 例外は OneDrive 認証エラーに誤分類しない", async () => {
+    vi.mocked(parseChecklist).mockImplementationOnce(() => {
+      throw new Error("checklist parse failed");
+    });
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; isAuthError: boolean; error: string };
+
+    expect(response.status).toBe(500);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe("保存処理中に予期しないエラーが発生しました。しばらくしてから再実行してください。");
+    expect(onedrive.saveText).not.toHaveBeenCalled();
+  });
+
   it("成功時に folderPath と uploaded 情報を返す", async () => {
     onedrive.saveText
       .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })

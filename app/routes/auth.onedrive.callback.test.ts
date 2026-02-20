@@ -52,12 +52,12 @@ describe("auth.onedrive.callback loader", () => {
   });
 
   it("token交換失敗時に内部詳細をレスポンスへ露出しない", async () => {
-    vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("state-1");
-    vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("state-1");
+    vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("bind-a.nonce-1");
+    vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("bind-a");
     vi.mocked(exchangeCodeForToken).mockRejectedValue(new Error("sensitive-token-error"));
 
     const request = new Request(
-      "https://localhost:5173/auth/onedrive/callback?code=test-code&state=state-1",
+      "https://localhost:5173/auth/onedrive/callback?code=test-code&state=bind-a.nonce-1",
       { headers: { Cookie: "onedrive_oauth_state=stub" } },
     );
 
@@ -83,5 +83,22 @@ describe("auth.onedrive.callback loader", () => {
 
     expect(response.status).toBe(400);
     expect(body).toBe("Invalid OAuth state or code.");
+  });
+
+  it("state に区切りドットがない場合は400で拒否する", async () => {
+    vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("bind-a");
+    vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("bind-a");
+
+    const request = new Request(
+      "https://localhost:5173/auth/onedrive/callback?code=test-code&state=bind-a",
+      { headers: { Cookie: "onedrive_oauth_state=stub; onedrive_oauth_bind=stub" } },
+    );
+
+    const response = await loader({ request });
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).toBe("Invalid OAuth state or code.");
+    expect(exchangeCodeForToken).not.toHaveBeenCalled();
   });
 });
