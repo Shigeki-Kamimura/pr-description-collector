@@ -54,4 +54,42 @@ describe("onedrive-auth refresh single-flight", () => {
     expect(token3).toBe("new-access-token");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("refresh タイムアウト後は single-flight ロックを解放して再試行できる", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    storeTokenForSession(sessionId, {
+      accessToken: "expired-access",
+      refreshToken: "refresh-token-1",
+      expiresAt: Date.now() - 1000,
+    });
+    vi.spyOn(onedriveOAuthSessionCookie, "parse").mockResolvedValue(sessionId as never);
+    const request = {
+      headers: { get: (name: string) => (name.toLowerCase() === "cookie" ? "onedrive_oauth_session=stub" : null) },
+    } as Request;
+
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce((_input: RequestInfo | URL, init?: RequestInit) => {
+        expect(init?.signal).toBeDefined();
+        return Promise.reject(new DOMException("timed out", "TimeoutError"));
+      })
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: "new-access-token-after-timeout",
+            refresh_token: "refresh-token-2",
+            expires_in: 3600,
+            token_type: "Bearer",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getAccessToken(request)).rejects.toThrow("timed out after 30000ms");
+    const token = await getAccessToken(request);
+
+    expect(token).toBe("new-access-token-after-timeout");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

@@ -18,6 +18,7 @@ const AUTH_BASE_URL = "https://login.microsoftonline.com";
 const DEFAULT_TENANT = "common";
 // OAuthスコープ
 const SCOPES = ["offline_access", "Files.ReadWrite", "User.Read"];
+const OAUTH_REQUEST_TIMEOUT_MS = 30_000;
 
 // OAuthトークンレスポンス
 type TokenResponse = {
@@ -247,11 +248,20 @@ function getTokenForSession(sessionId: string | null): TokenCache | null {
 
 // トークンをリクエストする
 async function requestToken(params: URLSearchParams): Promise<TokenResponse> {
-  const response = await fetch(getTokenEndpoint(), {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-  });
+  let response: Response;
+  try {
+    response = await fetch(getTokenEndpoint(), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+      signal: AbortSignal.timeout(OAUTH_REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(`OneDrive OAuth request timed out after ${OAUTH_REQUEST_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  }
 
   // エラーハンドリング
   if (!response.ok) {
