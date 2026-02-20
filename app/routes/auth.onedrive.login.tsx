@@ -17,7 +17,7 @@ export async function loader({ request }: { request: Request }) {
   // HTTPSでのアクセスを要求する。OneDrive OAuthはセキュアな環境でのみ動作するため、HTTPSでない場合はエラーレスポンスを返す。
   if (!isHttpsRequest(request)) {
     return new Response(
-      "HTTPS endpoint is required for OneDrive OAuth. Access via https://localhost:5173.",
+      "HTTPS endpoint is required for OneDrive OAuth. Secure Cookie is unavailable on HTTP. Access via https://localhost:5173.",
       { status: 400 },
     );
   }

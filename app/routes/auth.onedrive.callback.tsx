@@ -22,7 +22,7 @@ function buildOAuthRetryMessage(): string {
 export async function loader({ request }: { request: Request }) {
   if (!isHttpsRequest(request)) {
     return new Response(
-      "HTTPS endpoint is required for OneDrive OAuth callback. Access via https://localhost:5173.",
+      "HTTPS endpoint is required for OneDrive OAuth callback. Secure Cookie is unavailable on HTTP. Access via https://localhost:5173.",
       { status: 400 },
     );
   }

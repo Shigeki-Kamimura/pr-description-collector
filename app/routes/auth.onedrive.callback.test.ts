@@ -37,6 +37,16 @@ describe("auth.onedrive.callback loader", () => {
     vi.clearAllMocks();
   });
 
+  it("HTTPアクセスは400で拒否する", async () => {
+    const request = new Request("http://localhost:5173/auth/onedrive/callback?code=x&state=y");
+
+    const response = await loader({ request });
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).toContain("Secure Cookie is unavailable on HTTP");
+  });
+
   it("OAuth provider errorの詳細をレスポンスへ露出しない", async () => {
     const request = new Request(
       "https://localhost:5173/auth/onedrive/callback?error=access_denied&error_description=sensitive-details&error_codes=12345",
