@@ -17,6 +17,7 @@ import { getHttpStatus } from "../services/http-status";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
 import { parseChecklist } from "../services/checklist";
+import { verifyCsrfToken } from "../services/csrf.server";
 import { validatePrRefInput } from "../services/validation";
 
 export type ApiOneDriveUploadResponse =
@@ -42,6 +43,17 @@ export async function action({ request }: ActionFunctionArgs) {
     return Response.json(
       { ok: false, error: validation.error, isAuthError: false } satisfies ApiOneDriveUploadResponse,
       { status: 400 },
+    );
+  }
+  // CSRFトークンの検証。失敗した場合は 403 を返す。
+  if (!(await verifyCsrfToken(request, formData))) {
+    return Response.json(
+      {
+        ok: false,
+        error: "不正なリクエストです。ページを再読み込みして再試行してください。",
+        isAuthError: false,
+      } satisfies ApiOneDriveUploadResponse,
+      { status: 403 },
     );
   }
   const { owner, repo, prNumber } = validation;

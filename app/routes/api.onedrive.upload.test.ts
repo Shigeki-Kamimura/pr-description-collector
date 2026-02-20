@@ -13,6 +13,7 @@ import { action } from "./api.onedrive.upload";
 import { createGitHubServiceFromEnv } from "../services/github.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
 import { parseChecklist } from "../services/checklist";
+import { verifyCsrfToken } from "../services/csrf.server";
 import { validatePrRefInput } from "../services/validation";
 
 vi.mock("../services/github.server", () => ({
@@ -25,6 +26,10 @@ vi.mock("../services/onedrive.server", () => ({
 
 vi.mock("../services/checklist", () => ({
   parseChecklist: vi.fn(),
+}));
+
+vi.mock("../services/csrf.server", () => ({
+  verifyCsrfToken: vi.fn(),
 }));
 
 vi.mock("../services/validation", () => ({
@@ -64,6 +69,7 @@ describe("api.onedrive.upload action", () => {
       repo: "hello-world",
       prNumber: 123,
     });
+    vi.mocked(verifyCsrfToken).mockResolvedValue(true);
     vi.mocked(parseChecklist).mockReturnValue({ items: [], checked: 0, total: 0 });
 
     github = {
@@ -90,6 +96,20 @@ describe("api.onedrive.upload action", () => {
       deleteItem: vi.fn(),
     };
     vi.mocked(createOneDriveServiceFromEnv).mockResolvedValue(onedrive as never);
+  });
+
+  it("CSRF トークン不一致時は 403 で拒否する", async () => {
+    vi.mocked(verifyCsrfToken).mockResolvedValue(false);
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; error: string; isAuthError: boolean };
+
+    expect(response.status).toBe(403);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toContain("不正なリクエスト");
+    expect(createGitHubServiceFromEnv).not.toHaveBeenCalled();
+    expect(createOneDriveServiceFromEnv).not.toHaveBeenCalled();
   });
 
   it("archive保存失敗後にロールバック成功なら partial-write と rollback=ok を返す", async () => {

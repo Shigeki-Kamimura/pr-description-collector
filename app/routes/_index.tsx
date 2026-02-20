@@ -1,5 +1,5 @@
-import type { ActionFunctionArgs } from "react-router";
-import { Form, useActionData, useFetcher, useSearchParams } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { Form, useActionData, useFetcher, useLoaderData, useSearchParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
@@ -11,6 +11,7 @@ import type { ApiOneDriveSessionStatusResponse } from "./api.onedrive.session-st
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
 import { INVALID_PR_REF_ERROR, validatePrRefFields, validatePrRefInput } from "../services/validation";
 import { getHttpStatus } from "../services/http-status";
+import { ensureCsrfToken } from "../services/csrf.server";
 
 import { OneDriveAuthDialog } from "../components/OneDriveAuthDialog";
 import { SaveErrorDialog } from "../components/SaveErrorDialog";
@@ -34,6 +35,15 @@ export const meta = () => [{ title: "PR Description Collector" }];
 type ActionData =
   | { ok: true; description: string; result: Checklist }
   | { ok: false; error: string };
+type LoaderData = { csrfToken: string };
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { token, setCookie } = await ensureCsrfToken(request);
+  return Response.json(
+    { csrfToken: token } satisfies LoaderData,
+    { headers: setCookie ? { "Set-Cookie": setCookie } : undefined },
+  );
+}
 
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
@@ -99,6 +109,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Index() {
+  const { csrfToken } = useLoaderData<LoaderData>();
   const data = useActionData<ActionData>();
   const summary = data && data.ok ? summarize(data.result) : null;
 
@@ -363,7 +374,7 @@ export default function Index() {
                   setShowPrRefAnnotation(false);
                 }
                 uploadFetcher.submit(
-                  { owner, repo, prNumber },
+                  { owner, repo, prNumber, csrfToken },
                   { method: "post", action: "/api/onedrive/upload" },
                 );
               }}
