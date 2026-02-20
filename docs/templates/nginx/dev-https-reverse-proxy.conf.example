@@ -1,0 +1,88 @@
+# Development HTTPS reverse proxy template (Nginx)
+# 開発用 HTTPS リバースプロキシ テンプレート（Nginx）
+#
+# 目的:
+# - アプリ本体は HTTP で起動し、公開入口だけ HTTPS に統一する
+# - OAuth の redirect_uri に使う host/scheme を安定化する
+# - SPA/SSR フレームワークの Origin/Host チェック（CSRF 対策）と整合を取る
+#
+# 想定ユースケース:
+# - Remix / React Router / Next.js などのローカル開発
+# - Vite の HMR/WebSocket を使う構成
+# - localhost と 127.0.0.1 のどちらで開いても最終的に 1 つの host に寄せたい構成
+#
+# 使い方:
+# 1) 下記プレースホルダを実値に置換する
+# 2) ssl_certificate / ssl_certificate_key を実ファイルへ変更する
+# 3) Nginx の `http {}` 配下でこのファイルを include する
+#
+# プレースホルダ:
+# - __PUBLIC_PORT__       : 公開 HTTPS ポート（例: 5173）
+# - __CANONICAL_HOST__    : 正規ホスト名（例: localhost）
+# - __ALT_HOST__          : 代替ホスト名（例: 127.0.0.1）
+# - __UPSTREAM_HOST__     : upstream アプリホスト（例: 127.0.0.1）
+# - __UPSTREAM_PORT__     : upstream アプリポート（例: 5174）
+# - __CERT_PATH__         : 証明書 PEM パス
+# - __CERT_KEY_PATH__     : 秘密鍵 PEM パス
+#
+# 注意:
+# - `map` は `http` コンテキストでのみ有効（server の外に置く）
+# - `if` に依存せず server を分離して host 正規化する
+# - 開発用テンプレートのため HSTS は未設定（本番では別途検討する）
+
+# WebSocket 判定（HMR 向け）
+# - Upgrade ヘッダーがある場合のみ Connection: upgrade
+# - 通常リクエストは Connection: close
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# 代替ホスト（例: 127.0.0.1）からのアクセスを正規ホストへ寄せる server
+# OAuth redirect_uri の host を __CANONICAL_HOST__ に固定したいときに使う
+server {
+    listen __PUBLIC_PORT__ ssl;
+    server_name __ALT_HOST__;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_certificate     __CERT_PATH__;
+    ssl_certificate_key __CERT_KEY_PATH__;
+
+    return 302 https://__CANONICAL_HOST__:__PUBLIC_PORT__$request_uri;
+}
+
+# 正規ホスト（公開入口）server
+server {
+    listen __PUBLIC_PORT__ ssl;
+    server_name __CANONICAL_HOST__;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_certificate     __CERT_PATH__;
+    ssl_certificate_key __CERT_KEY_PATH__;
+
+    location / {
+        proxy_pass http://__UPSTREAM_HOST__:__UPSTREAM_PORT__;
+        proxy_http_version 1.1;
+
+        # Host/Origin 整合:
+        # - ブラウザが見ている host:port を upstream にそのまま渡す
+        # - OAuth callback URL 生成や CSRF 判定との不整合を減らす
+        # - $host は Host ヘッダー未送信時に server_name へフォールバックする
+        proxy_set_header Host $host:$server_port;
+        proxy_set_header X-Forwarded-Host $host:$server_port;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 監査/デバッグ用（必要に応じて削除可）
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # WebSocket (HMR)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        # SSE/HMR の遅延を避ける
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+}

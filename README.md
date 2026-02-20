@@ -15,6 +15,24 @@ A modern, production-ready template for building full-stack React applications u
 
 ## Getting Started
 
+## Environment Variables
+
+- GitHub: `GITHUB_TOKEN`（または `GITHUB_PAT` / `GITHUB_APP_*`）
+- OneDrive: `ONEDRIVE_ACCESS_TOKEN`（開発用・`/me/drive` を操作できるトークン）
+- OneDrive OAuth（サーバーサイド）: `ONEDRIVE_TENANT` / `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` / `ONEDRIVE_REDIRECT_URI`
+- OneDrive OAuth token store: `ONEDRIVE_TOKEN_STORE_MAX_SESSIONS`（任意）/ `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION`（非推奨の暫定フラグ）
+- OneDrive 保存先: `ONEDRIVE_BASE_FOLDER`（任意）/ `ONEDRIVE_WORK_FOLDER`（任意）
+- `SESSION_SECRET` は production で必須（development 未設定時は固定フォールバックあり、明示設定推奨）
+- 開発サーバー: `DEV_SERVER_HOST` / `DEV_SERVER_PORT`（ViteはHTTPで待受。利用者アクセスはHTTPS終端を必須とする）
+- 例: [.env.example](.env.example)
+
+### OneDrive OAuth Token Store (Production Note)
+
+- 本番環境でのメモリ内 `tokenStore` 運用は非推奨です。
+- `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true` は一時回避用です。
+- メモリ運用のまま本番で再起動・再デプロイ・スケールアウトすると、OneDrive OAuth セッションは全喪失します。
+- 本番では Redis / DB などの永続ストア実装を必須にしてください。
+
 ### Installation
 
 Install the dependencies:
@@ -31,7 +49,70 @@ Start the development server with HMR:
 npm run dev
 ```
 
-Your application will be available at `http://localhost:5173`.
+Your application will be available at:
+
+- `https://localhost:5173`（開発時の必須入口）
+- `http://localhost:5173` は非サポート（OAuthフロー対象外）
+
+### Development with Nginx HTTPS (Required)
+### NginxでHTTPS終端する開発手順（必須）
+
+Use Nginx as HTTPS entrypoint and keep Vite on HTTP:
+NginxをHTTPS入口にして、ViteはHTTPで起動します。
+
+```env
+# .env
+DEV_SERVER_HOST=127.0.0.1
+DEV_SERVER_PORT=5174
+ONEDRIVE_REDIRECT_URI=https://localhost:5173/auth/onedrive/callback
+ONEDRIVE_TRUST_X_FORWARDED_PROTO=true
+# optional: customize trusted proxy hosts when needed
+# ONEDRIVE_TRUSTED_PROXY_HOSTS=localhost:5173,127.0.0.1:5173
+# optional: require proxy shared secret when trusting forwarded headers
+# ONEDRIVE_TRUST_PROXY_SHARED_SECRET=change-this
+```
+
+`ONEDRIVE_TRUST_X_FORWARDED_PROTO=true` is required for the Nginx HTTPS-termination setup above, because
+the app receives upstream HTTP while external access is HTTPS.
+If `ONEDRIVE_TRUST_PROXY_SHARED_SECRET` is set, the app also requires
+`x-onedrive-proxy-secret` to match before trusting `X-Forwarded-*` headers.
+
+Nginx config template:
+Nginx設定テンプレート:
+
+- `docs/vite-dev-https.conf.example`
+
+Setup steps:
+セットアップ手順:
+
+1. Prepare your own PEM files (certificate and private key).
+1. PEMファイル（証明書と秘密鍵）を各自で用意する。
+2. Copy the template:
+2. テンプレートを配置する:
+
+```bash
+sudo cp docs/vite-dev-https.conf.example /etc/nginx/sites-available/vite-dev-https
+```
+
+3. `/etc/nginx/sites-available/vite-dev-https` 内の証明書パスを実ファイルに合わせて修正する。
+4. サイトを有効化し、Nginxを再読込する:
+
+```bash
+sudo ln -sfn /etc/nginx/sites-available/vite-dev-https /etc/nginx/sites-enabled/vite-dev-https
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+5. アプリサーバー（Vite）を起動する:
+
+```bash
+npm run dev
+```
+
+Access always from:
+アクセス先は常に以下に統一:
+
+- `https://localhost:5173`
 
 ## Building for Production
 
