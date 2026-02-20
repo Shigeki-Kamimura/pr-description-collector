@@ -60,7 +60,6 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     const status = getHttpStatus(error);
     if (status !== null) {
       switch (status) {
