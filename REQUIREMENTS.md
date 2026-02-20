@@ -49,8 +49,12 @@
    - 画像は PR description 内の HTML `img` タグと Markdown 画像の両方をパースしダウンロードする。
    - 画像取得に失敗した場合はエラーメッセージを表示する。
    - 保存先のフォルダ構成は以下とする。
-   - JSON: `/<project>/pr/<prNumber>/<prTitle>/json/`
-   - 画像: `/<project>/pr/<prNumber>/<prTitle>/evidence-img/`
+   - `ONEDRIVE_WORK_FOLDER` が設定されている場合: `/<work>/<project>/<repo>/PullRequests/PR<prNumber>-<prTitle>/`
+   - `ONEDRIVE_WORK_FOLDER` が未設定の場合: `/<project>/<repo>/PullRequests/PR<prNumber>-<prTitle>/`
+   - JSON: 上記フォルダ配下に `archive.json` を保存する。
+   - 画像: 上記フォルダ配下の `evidence-img/` に保存する。
+   - `prTitle` は日本語を保持し、OneDrive/Windows で使用できない文字のみ除外する。
+   - `prTitle` はフォルダ名として最大 80 文字に切り詰める。
    - ファイル名は最小限の固定名とし、JSON は `archive.json`、画像は `1.png` / `2.png` のように連番とする（拡張子は取得した画像に準拠）。
    - 画像の再参照性を高めるため、アーカイブ用 JSON に画像の対応情報を含める（例: `evidenceImages` に `index` / `savedFilename` / `originalFilename` / `sourceUrl`）。
    - 本アプリでのユーザー操作は「フォルダ作成」と「ファイル移動」のみとし、画像単体を閲覧する UI は提供しない。
@@ -64,6 +68,7 @@
        "repoName": "example-repo",
        "prUrl": "https://github.com/octo-org/example-repo/pull/1",
        "prAuthor": "octocat",
+       "mergedBy": "merger1",
        "reviewer": "reviewer1",
        "archivedBy": "reviewer1",
        "body": "PR description の本文...",
@@ -78,11 +83,15 @@
      - `repoName`: リポジトリ名
      - `prUrl`: プルリクエストの URL
      - `prAuthor`: プルリクエストを出したユーザー
+     - `mergedBy`: プルリクエストをマージしたユーザー
      - `reviewer`: レビュアー
      - `archivedBy`: 保存したユーザー
      - `body`: ディスクリプション本文
      - `archivedAt`: 保存日時（日本時間）
      - `archivedAtUtc`: 保存日時（UTC）
+   - `archivedBy` は OneDrive の `/me` 情報から取得する。
+   - `/me` から保存実行者を特定できない場合（`userPrincipalName` / `displayName` ともに取得不可）は、監査性を優先して保存処理を中止し、エラーとして扱う。
+   - 保存処理の開始前に `/me/drive` で OneDrive セッションの有効性を検証し、未認証時は保存処理を実行しない。
 
 ## 非機能要件
 - **速度**: 数十〜数百行程度の入力で即時に解析できる。 

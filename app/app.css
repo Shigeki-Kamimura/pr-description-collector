@@ -73,10 +73,25 @@ html, body {
   gap: 8px;
 }
 
-/* ボタン直下のメッセージ領域（出ても出なくても高さを一定にしてズレを防ぐ） */
-.btn-status {
-  min-height: 16px;
+.annotation-wrapper {
+  margin-top: 8px;
+  min-height: 18px;
 }
+
+.annotation-text {
+  color: #b91c1c;
+  font-weight: 700;
+  font-size: 20px;
+  margin: 0;
+}
+
+.annotation-text-small {
+  color: #b91c1c;
+  font-weight: 700;
+  font-size: 16px;
+  margin: 4px 0 0;
+}
+
 
 .btn {
   display: inline-block;
@@ -86,6 +101,24 @@ html, body {
   color: #fff;
   border: none;
   cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  background: #9ca3af;
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+.connect-one-drive-btn {
+  text-align: center;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.btn.secondary {
+  background: #6b7280;
 }
 
 .fetch-section, .result-section { margin-top: 24px; }
@@ -95,8 +128,10 @@ html, body {
 .result-item { display: flex; align-items: center; gap: 8px; }
 .result-line { font-size: 11px; color: var(--muted-2); }
 
-.error-text { color: #b91c1c; font-size: 12px; margin: 0; }
-.hint-text { color: var(--muted); font-size: 12px; margin: 0; }
+.fetched-pr-title {
+  font-weight: bolder;
+}
+
 
 /* Rendered Markdown (minimal) */
 #markdown-view {
@@ -107,6 +142,43 @@ html, body {
 
 #markdown-view > :first-child { margin-top: 0; }
 #markdown-view > :last-child { margin-bottom: 0; }
+
+.dialog {
+  border: none;
+  border-radius: 10px;
+  padding: 0;
+  max-width: 520px;
+  width: min(92vw, 520px);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.25);
+}
+
+.dialog::backdrop {
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.dialog-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.dialog-title {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
+.dialog-text {
+  font-size: 14px;
+  color: #111827;
+  margin: 0 0 16px;
+  white-space: pre-wrap;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
 
 #markdown-view ul,
 #markdown-view ol {

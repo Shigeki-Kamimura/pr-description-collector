@@ -1,0 +1,81 @@
+# Development reverse proxy for this app / このアプリ用の開発リバースプロキシ設定
+# - Public entry / 公開入口: https://localhost:5173
+# - Vite upstream / Vite上流: http://127.0.0.1:5174
+# - If opened via 127.0.0.1, redirect to localhost to keep OAuth host stable.
+#   127.0.0.1 で開かれた場合は localhost に寄せて OAuth のホストを安定化する
+#
+# Why this proxy exists / このプロキシが必要な理由:
+#   VS Code Remote の port-forwarding 先を移動した場合、Vite を直接 HTTPS にせず
+#   nginx で SSL 終端 + Host 正規化を行う。React Router single-fetch は
+#   Origin と Host を照合して CSRF 検証するため、proxy_set_header Host で
+#   ブラウザ上の Host:port をそのまま upstream に渡す必要がある。
+#
+# IMPORTANT / 重要:
+# - Prepare your own certificate/key files.
+#   証明書(PEM)と秘密鍵(PEM)は各自で用意してください。
+# - Update ssl_certificate and ssl_certificate_key paths before enabling.
+#   有効化前に ssl_certificate / ssl_certificate_key のパスを実ファイルへ変更してください。
+
+# WebSocket 判定用 map（server ブロックの外に置く）
+# $http_upgrade が空なら通常の HTTP → Connection を閉じる
+# $http_upgrade が "websocket" なら Connection: upgrade にする
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 5173 ssl;
+    server_name 127.0.0.1;
+
+    # TLS 1.2+ only / 開発用でも古いプロトコルは無効化する
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Provide your own PEM files. / 各自で用意した PEM ファイルのパスを指定する
+    ssl_certificate     /etc/nginx/certs/localhost+2.pem;
+    ssl_certificate_key /etc/nginx/certs/localhost+2-key.pem;
+
+    # Redirect 127.0.0.1 → localhost to keep OAuth redirect_uri stable
+    # OAuth の redirect_uri を localhost に統一するため 127.0.0.1 をリダイレクト
+    return 302 https://localhost:5173$request_uri;
+}
+
+server {
+    listen 5173 ssl;
+    server_name localhost;
+
+    # TLS 1.2+ only / 開発用でも古いプロトコルは無効化する
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Provide your own PEM files. / 各自で用意した PEM ファイルのパスを指定する
+    ssl_certificate     /etc/nginx/certs/localhost+2.pem;
+    ssl_certificate_key /etc/nginx/certs/localhost+2-key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:5174;
+        proxy_http_version 1.1;
+
+        # --- Host / Origin 正規化 (CSRF 対策の要) ---
+        # $host は Host ヘッダーが空でも server_name にフォールバックするため安全。
+        # $http_host は Host 未送信時に空文字になり、upstream 側で
+        # new URL(path, 'http://') → "Invalid URL" クラッシュを引き起こす。
+        proxy_set_header Host $host:$server_port;
+        proxy_set_header X-Forwarded-Host $host:$server_port;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # --- WebSocket (Vite HMR) ---
+        # Connection ヘッダーは WebSocket 時のみ "upgrade"、通常は "close"
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        # --- Streaming / HMR ---
+        # Vite の HMR (EventSource) や SSE を即時配信するためバッファリング無効化
+        proxy_buffering off;
+
+        # HMR WebSocket が idle timeout で切れないよう長めに設定
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+}

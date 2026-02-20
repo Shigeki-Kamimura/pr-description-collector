@@ -46,6 +46,8 @@ export type PullRequest = {
   title: string;// PRタイトル
   body: string; // PR本文（Markdown）
   url: string; // PRのHTML URL
+  authorLogin: string | null; // PR作成者
+  mergedByLogin: string | null; // PRをマージしたユーザー
 };
 
 export type PullRequestReviewState = "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
@@ -112,11 +114,18 @@ export async function createGitHubServiceFromEnv(): Promise<GitHubService> {
   const installationIdRaw = process.env.GITHUB_APP_INSTALLATION_ID ?? "";
   const privateKeyRaw = process.env.GITHUB_APP_PRIVATE_KEY ?? "";
 
-  const appId = Number(appIdRaw);
-  const installationId = Number(installationIdRaw);
+  const appId = Number.parseInt(appIdRaw, 10);
+  const installationId = Number.parseInt(installationIdRaw, 10);
   const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
 
-  if (!Number.isFinite(appId) || !Number.isFinite(installationId) || !privateKey) {
+  const isValidAppAuth =
+    Number.isSafeInteger(appId) &&
+    appId > 0 &&
+    Number.isSafeInteger(installationId) &&
+    installationId > 0 &&
+    privateKey.length > 0;
+
+  if (!isValidAppAuth) {
     throw new Error(
       "GitHub認証情報が未設定です。GITHUB_TOKEN/GITHUB_PAT または GITHUB_APP_ID/GITHUB_APP_INSTALLATION_ID/GITHUB_APP_PRIVATE_KEY を設定してください",
     );
@@ -141,6 +150,8 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
       title: data.title,
       body: data.body ?? "",
       url: data.html_url ?? "",
+      authorLogin: data.user?.login ?? null,
+      mergedByLogin: data.merged_by?.login ?? null,
     };
   };
 
@@ -153,12 +164,20 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
     },
     // PRレビュー一覧を取得
     async getPullRequestReviews(ref: PullRequestRef): Promise<PullRequestReview[]> {
-      const { data } = await octokit.rest.pulls.listReviews({
-        owner: ref.repo.owner,
-        repo: ref.repo.name,
-        pull_number: ref.number,
-        per_page: 100,
-      });
+      const perPage = 100;
+      const data = [];
+      // GitHub APIは1回のリクエストで最大100件までしか取得できないため、ページネーションを処理する。
+      for (let page = 1; ; page += 1) {
+        const response = await octokit.rest.pulls.listReviews({
+          owner: ref.repo.owner,
+          repo: ref.repo.name,
+          pull_number: ref.number,
+          per_page: perPage,
+          page,
+        });
+        data.push(...response.data);
+        if (response.data.length < perPage) break;
+      }
       // Octokitの型をアプリ内型に変換して返す
       return data.map((review) => ({
         id: String(review.id),

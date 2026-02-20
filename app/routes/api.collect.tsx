@@ -19,14 +19,12 @@ import type { ActionFunctionArgs } from "react-router";
 
 import {
   createGitHubServiceFromEnv,
-  type PullRequest, // PR情報の型
-  type PullRequestReview, // PRレビュー情報の型
-  type PullRequestRef, // PR参照の型
+  type PullRequest,
+  type PullRequestReview,
+  type PullRequestRef,
 } from "../services/github.server";
-// PR のオーナー、リポジトリ名、PR番号の入力をバリデーションするユーティリティ
-import { validatePrRefInput } from "../services/validation"; 
-// OctokitのRequestErrorを使ってエラー判定
-import { RequestError } from "@octokit/request-error";
+import { validatePrRefInput } from "../services/validation";
+import { getHttpStatus } from "../services/http-status";
 
 export type ApiCollectResponse =
   | {
@@ -43,7 +41,6 @@ export type ApiCollectResponse =
     };
 
 export async function action({ request }: ActionFunctionArgs) {
-  // フォームPOSTで受け取る（fetcher.submit からの送信もここに来る）
   const formData = await request.formData();
   const validation = validatePrRefInput(formData);
   if (!validation.ok) {
@@ -57,7 +54,6 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   try {
-    // GitHub APIへアクセスし、PRメタ＋本文（Markdown）＋レビューを取得
     const github = await createGitHubServiceFromEnv();
     const ref: PullRequestRef = {
       repo: { owner: validation.owner, name: validation.repo },
@@ -66,7 +62,6 @@ export async function action({ request }: ActionFunctionArgs) {
     const pullRequest = await github.getPullRequest(ref);
     const reviews = await github.getPullRequestReviews(ref);
 
-    // UI/後続処理向けの簡易フラグ（厳密な「最新APPROVED」判定は後で強化してもよい）
     const hasApproved = reviews.some((r) => r.state === "APPROVED");
 
     return Response.json(
@@ -80,9 +75,8 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
-    // Octokit の RequestError からステータスコード別にユーザー向けメッセージを返す
-    if (error instanceof RequestError) {
-      const status = error.status;
+    const status = getHttpStatus(error);
+    if (status !== null) {
       switch (status) {
         case 401:
           return Response.json(
@@ -106,14 +100,13 @@ export async function action({ request }: ActionFunctionArgs) {
           );
         default:
           return Response.json(
-            { ok: false, error: `GitHub APIエラー (${status}): ${error.message}`, },
+            { ok: false, error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。", },
             { status: 502 },
           );
       }
     }
-    const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json(
-      { ok: false, error: message } satisfies ApiCollectResponse,
+      { ok: false, error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。" } satisfies ApiCollectResponse,
       { status: 502 },
     );
   }
