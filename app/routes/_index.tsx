@@ -11,7 +11,7 @@ import type { ApiOneDriveSessionStatusResponse } from "./api.onedrive.session-st
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
 import { INVALID_PR_REF_ERROR, validatePrRefFields, validatePrRefInput } from "../services/validation";
 import { getHttpStatus } from "../services/http-status";
-import { ensureCsrfToken } from "../services/csrf.server";
+import { ensureCsrfToken, verifyCsrfToken } from "../services/csrf.server";
 
 import { OneDriveAuthDialog } from "../components/OneDriveAuthDialog";
 import { SaveErrorDialog } from "../components/SaveErrorDialog";
@@ -52,6 +52,15 @@ export async function action({ request }: ActionFunctionArgs) {
     return Response.json(
       { ok: false, error: validation.error } satisfies ActionData,
       { status: 400 },
+    );
+  }
+  if (!(await verifyCsrfToken(request, formData))) {
+    return Response.json(
+      {
+        ok: false,
+        error: "不正なリクエストです。ページを再読み込みして再試行してください。",
+      } satisfies ActionData,
+      { status: 403 },
     );
   }
 
@@ -392,6 +401,7 @@ export default function Index() {
               <input type="hidden" name="owner" value={owner} />
               <input type="hidden" name="repo" value={repo} />
               <input type="hidden" name="prNumber" value={prNumber} />
+              <input type="hidden" name="csrfToken" value={csrfToken} />
               <button
                 type="submit"
                 className="btn"
