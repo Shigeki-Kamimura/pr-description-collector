@@ -10,26 +10,7 @@
 // 例えば、OAuthの認可URLを生成する関数や、トークンを交換する関数などが含まれる。
 // これらの関数は、認証ルートのローダーやアクションで利用される。
 import { createCookie } from "react-router";
-
-// Cookie署名用のシークレット
-const sessionSecret = process.env.SESSION_SECRET ?? "";
-const isProduction = process.env.NODE_ENV === "production";
-const defaultDevSessionSecret =
-  "dev-session-secret-pr-description-collector-please-set-session-secret-explicitly";
-const usingDefaultDevSessionSecret = !sessionSecret && !isProduction;
-const resolvedSessionSecret = sessionSecret || (usingDefaultDevSessionSecret ? defaultDevSessionSecret : "");
-
-// セッションシークレットが未設定の場合はエラーを投げる。production では必須、development では警告を出す。
-if (!resolvedSessionSecret) {
-  throw new Error("SESSION_SECRET が未設定です。production では必須です。");
-}
-// 開発環境でセッションシークレットが未設定の場合は警告を出す。
-// これにより、開発者がセキュリティリスクを認識できるようになる。
-if (usingDefaultDevSessionSecret) {
-  console.warn(
-    "SESSION_SECRET が未設定のため、固定の開発用シークレットを使用しています。ローカルの安定運用のため、.env に SESSION_SECRET を明示設定してください。",
-  );
-}
+import { isProduction, resolvedSessionSecret } from "./session-secret.server";
 
 // Microsoft Entra ID (旧AAD) OAuth2エンドポイント
 const AUTH_BASE_URL = "https://login.microsoftonline.com";

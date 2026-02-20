@@ -14,6 +14,7 @@
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createCookie } from "react-router";
+import { resolvedSessionSecret } from "./session-secret.server";
 
 const csrfTokenCookie = createCookie("csrf_token", {
   httpOnly: true,
@@ -21,6 +22,7 @@ const csrfTokenCookie = createCookie("csrf_token", {
   sameSite: "lax",
   secure: true,
   maxAge: 60 * 60 * 8,
+  secrets: [resolvedSessionSecret],
 });
 // トークンの比較は、タイミング攻撃を防止するためにハッシュ化してから行う。
 function secureEquals(left: string, right: string): boolean {
