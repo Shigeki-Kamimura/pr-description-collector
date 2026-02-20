@@ -12,6 +12,7 @@
  *   - フォームの `csrfToken` と Cookie の `csrf_token` が一致するかを検証する。
  *   - 欠落または不一致の場合は `false` を返し、呼び出し側でリクエストを拒否する。
  */
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createCookie } from "react-router";
 
 const csrfTokenCookie = createCookie("csrf_token", {
@@ -21,7 +22,14 @@ const csrfTokenCookie = createCookie("csrf_token", {
   secure: true,
   maxAge: 60 * 60 * 8,
 });
+// トークンの比較は、タイミング攻撃を防止するためにハッシュ化してから行う。
+function secureEquals(left: string, right: string): boolean {
+  const leftDigest = createHash("sha256").update(left, "utf8").digest();
+  const rightDigest = createHash("sha256").update(right, "utf8").digest();
+  return timingSafeEqual(leftDigest, rightDigest);
+}
 
+// CSRFトークンを確保する。既存のトークンがあればそれを返し、なければ新規に発行してSet-Cookieとともに返す。
 export async function ensureCsrfToken(request: Request): Promise<{ token: string; setCookie?: string }> {
   const cookieHeader = request.headers.get("Cookie");
   const existing = (await csrfTokenCookie.parse(cookieHeader)) as string | null;
@@ -33,7 +41,7 @@ export async function ensureCsrfToken(request: Request): Promise<{ token: string
   const setCookie = await csrfTokenCookie.serialize(token);
   return { token, setCookie };
 }
-
+// リクエストのCSRFトークンを検証する。フォームデータから `csrfToken` を取得し、Cookieの `csrf_token` と比較する。
 export async function verifyCsrfToken(request: Request, formData: FormData): Promise<boolean> {
   const submitted = formData.get("csrfToken");
   if (typeof submitted !== "string" || submitted.length === 0) return false;
@@ -42,5 +50,5 @@ export async function verifyCsrfToken(request: Request, formData: FormData): Pro
   const token = (await csrfTokenCookie.parse(cookieHeader)) as string | null;
   if (!token) return false;
 
-  return token === submitted;
+  return secureEquals(token, submitted);
 }
