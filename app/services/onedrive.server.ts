@@ -85,7 +85,7 @@ type GraphDrive = {
   id: string;
   driveType?: string | null;
 };
-class OneDriveApiError extends Error {
+export class OneDriveApiError extends Error {
   status: number;
   code?: string;
 
@@ -95,6 +95,46 @@ class OneDriveApiError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+// Graph APIのエラーレスポンスを解析して、OneDriveApiErrorを構築するユーティリティ関数。
+// これにより、APIエラーの詳細情報を含む例外を一元的に生成できるようになる。
+function buildOneDriveApiError(response: Response, responseText: string): OneDriveApiError {
+  let details = "";
+  let errorCode = "";
+  let errorMessage = "";
+  let requestMeta = "";
+  try {
+    // Graph APIのエラー形式を解析して、エラーコードやメッセージ、リクエストIDなどの情報を抽出する。
+    const json = JSON.parse(responseText) as GraphErrorResponse;
+    errorCode = json.error?.code ?? "";
+    errorMessage = json.error?.message ?? "";
+    details = errorMessage ? `: ${errorMessage}` : "";
+    const requestId =
+      json.error?.innerError?.["request-id"] ?? response.headers.get("request-id") ?? "";
+    const clientRequestId =
+      json.error?.innerError?.["client-request-id"] ??
+      response.headers.get("client-request-id") ??
+      "";
+    const date = json.error?.innerError?.date ?? response.headers.get("date") ?? "";
+    const meta = [
+      requestId ? `request-id=${requestId}` : "",
+      clientRequestId ? `client-request-id=${clientRequestId}` : "",
+      date ? `date=${date}` : "",
+    ].filter(Boolean);
+    requestMeta = meta.length > 0 ? ` [${meta.join(" ")}]` : "";
+  } catch {
+    const fallback = responseText.trim();
+    if (fallback) {
+      const summarized = fallback.length > 300 ? `${fallback.slice(0, 300)}...` : fallback;
+      details = `: ${summarized}`;
+    }
+  }
+  const codePart = errorCode ? ` [code=${errorCode}]` : "";
+  return new OneDriveApiError(
+    `OneDrive API error (${response.status})${codePart}${details}${requestMeta}`,
+    response.status,
+    errorCode || undefined,
+  );
 }
 
 // パスの正規化とエンコード
@@ -137,45 +177,7 @@ async function graphJson<T>(accessToken: string, path: string, init?: RequestIni
 
   // エラーハンドリング
   if (!response.ok) {
-    let details = ""; // 追加の詳細情報
-    let errorCode = ""; // Graph APIのエラーコード
-    let errorMessage = ""; // Graph APIのエラーメッセージ
-    let requestMeta = ""; // request-id等の追跡情報
-    const responseText = await response.text();
-    try {
-      // Graph APIのエラー形式を解析して、エラーコードやメッセージ、リクエストIDなどの情報を抽出する。
-      const json = JSON.parse(responseText) as GraphErrorResponse; // エラー内容を解析
-      // エラーコードとメッセージを抽出する。
-      // これにより、エラーの原因をより具体的に把握できるようになる。
-      errorCode = json.error?.code ?? "";
-      errorMessage = json.error?.message ?? "";
-      details = errorMessage ? `: ${errorMessage}` : "";
-      const requestId =
-        json.error?.innerError?.["request-id"] ?? response.headers.get("request-id") ?? "";
-      const clientRequestId =
-        json.error?.innerError?.["client-request-id"] ??
-        response.headers.get("client-request-id") ??
-        "";
-      const date = json.error?.innerError?.date ?? response.headers.get("date") ?? "";
-      const meta = [
-        requestId ? `request-id=${requestId}` : "",
-        clientRequestId ? `client-request-id=${clientRequestId}` : "",
-        date ? `date=${date}` : "",
-      ].filter(Boolean);
-      requestMeta = meta.length > 0 ? ` [${meta.join(" ")}]` : "";
-    } catch {
-      const fallback = responseText.trim();
-      if (fallback) {
-        const summarized = fallback.length > 300 ? `${fallback.slice(0, 300)}...` : fallback;
-        details = `: ${summarized}`;
-      }
-    }
-    const codePart = errorCode ? ` [code=${errorCode}]` : ""; // エラーコード部分
-    throw new OneDriveApiError(
-      `OneDrive API error (${response.status})${codePart}${details}${requestMeta}`,
-      response.status,
-      errorCode || undefined,
-    );
+    throw buildOneDriveApiError(response, await response.text());
   }
 
   return (await response.json()) as T;
@@ -193,7 +195,7 @@ async function graphText(accessToken: string, path: string, init?: RequestInit):
 
   // エラーハンドリング
   if (!response.ok) {
-    throw new Error(`OneDrive API error (${response.status})`);
+    throw buildOneDriveApiError(response, await response.text());
   }
   return await response.text();
 }
@@ -208,39 +210,7 @@ async function graphVoid(accessToken: string, path: string, init?: RequestInit):
   });
 
   if (response.ok) return;
-
-  let details = "";
-  let errorCode = "";
-  let errorMessage = "";
-  let requestMeta = "";
-  const responseText = await response.text();
-  try {
-    const json = JSON.parse(responseText) as GraphErrorResponse;
-    errorCode = json.error?.code ?? "";
-    errorMessage = json.error?.message ?? "";
-    details = errorMessage ? `: ${errorMessage}` : "";
-    const requestId =
-      json.error?.innerError?.["request-id"] ?? response.headers.get("request-id") ?? "";
-    const clientRequestId =
-      json.error?.innerError?.["client-request-id"] ??
-      response.headers.get("client-request-id") ??
-      "";
-    const date = json.error?.innerError?.date ?? response.headers.get("date") ?? "";
-    const meta = [
-      requestId ? `request-id=${requestId}` : "",
-      clientRequestId ? `client-request-id=${clientRequestId}` : "",
-      date ? `date=${date}` : "",
-    ].filter(Boolean);
-    requestMeta = meta.length > 0 ? ` [${meta.join(" ")}]` : "";
-  } catch {
-    const fallback = responseText.trim();
-    if (fallback) {
-      const summarized = fallback.length > 300 ? `${fallback.slice(0, 300)}...` : fallback;
-      details = `: ${summarized}`;
-    }
-  }
-  const codePart = errorCode ? ` [code=${errorCode}]` : "";
-  throw new Error(`OneDrive API error (${response.status})${codePart}${details}${requestMeta}`);
+  throw buildOneDriveApiError(response, await response.text());
 }
 
 // 指定パスのドライブアイテムのメタデータを取得するユーティリティ
@@ -383,7 +353,13 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
       const normalized = normalizeDrivePath(path);
       if (!normalized) throw new Error("OneDrive deleteItem: path is empty");
       const encoded = encodeDrivePath(normalized);
-      await graphVoid(auth.accessToken, `/me/drive/root:/${encoded}:`, { method: "DELETE" });
+      try {
+        await graphVoid(auth.accessToken, `/me/drive/root:/${encoded}:`, { method: "DELETE" });
+      } catch (error) {
+        // 既に削除済み(404)は成功扱いにする。
+        if (error instanceof OneDriveApiError && error.status === 404) return;
+        throw error;
+      }
     },
 
     // 現在のユーザー情報を取得するユーティリティ

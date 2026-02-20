@@ -112,7 +112,7 @@ describe("api.onedrive.upload action", () => {
     expect(createOneDriveServiceFromEnv).not.toHaveBeenCalled();
   });
 
-  it("archive保存失敗後にロールバック成功なら partial-write と rollback=ok を返す", async () => {
+  it("archive保存失敗後にロールバック成功時も内部詳細を露出せず定型メッセージを返す", async () => {
     onedrive.saveText
       .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
       .mockRejectedValueOnce(new Error("archive write failed"));
@@ -123,12 +123,11 @@ describe("api.onedrive.upload action", () => {
 
     expect(response.status).toBe(502);
     expect(body.ok).toBe(false);
-    expect(body.error).toContain("partial-write");
-    expect(body.error).toContain("rollback=ok");
+    expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
     expect(onedrive.deleteItem).toHaveBeenCalledTimes(1);
   });
 
-  it("archive保存失敗後にロールバック失敗なら rollback=failed を返す", async () => {
+  it("archive保存失敗後にロールバック失敗時も内部詳細を露出せず定型メッセージを返す", async () => {
     onedrive.saveText
       .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
       .mockRejectedValueOnce(new Error("archive write failed"));
@@ -139,8 +138,7 @@ describe("api.onedrive.upload action", () => {
 
     expect(response.status).toBe(502);
     expect(body.ok).toBe(false);
-    expect(body.error).toContain("rollback=failed");
-    expect(body.error).toContain("delete failed");
+    expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
   });
 
   it("OneDrive認証エラーを 401 / isAuthError=true で返す", async () => {
@@ -155,6 +153,31 @@ describe("api.onedrive.upload action", () => {
     expect(body.ok).toBe(false);
     expect(body.isAuthError).toBe(true);
     expect(body.error).toContain("InvalidAuthenticationToken");
+  });
+
+  it("OneDrive非認証エラーは内部詳細を露出せず定型メッセージで返す", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    onedrive.getDriveInfo.mockRejectedValue(
+      new Error("OneDrive API error (500) [code=generalException]: sensitive-internal-detail"),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+      errorCode?: string;
+      errorMessage?: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
+    expect(body.errorCode).toBeUndefined();
+    expect(body.errorMessage).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("parseChecklist 例外は OneDrive 認証エラーに誤分類しない", async () => {
