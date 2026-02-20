@@ -54,15 +54,24 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? hasDetail
         ? `${parsed.code ?? "UNKNOWN"}: ${parsed.message ?? rawMessage}`
         : "OneDrive 認証が有効ではありません。Connect OneDrive から再認証してください。"
-      : `OneDrive セッション確認に失敗しました: ${rawMessage}`;
+      : "OneDrive セッション確認に失敗しました。しばらくしてから再実行してください。";
+    if (!isAuthLike) {
+      // 認証エラーの可能性が低いエラーは、内部的な詳細をログに残す。
+      // これにより、ユーザーには定型のエラーメッセージのみを返しつつ、開発者は問題の診断に必要な情報を得られるようになる。
+      console.error("OneDrive session-status failed.", {
+        message: rawMessage,
+        code: parsed.code,
+        detail: parsed.message,
+      });
+    }
 
     return Response.json(
       {
         ok: false,
         error: message,
         isAuthError: isAuthLike,
-        errorCode: parsed.code,
-        errorMessage: parsed.message ?? rawMessage,
+        errorCode: isAuthLike ? parsed.code : undefined,
+        errorMessage: isAuthLike ? parsed.message ?? rawMessage : undefined,
       } satisfies ApiOneDriveSessionStatusResponse,
       { status: isAuthLike ? 401 : 502 },
     );
