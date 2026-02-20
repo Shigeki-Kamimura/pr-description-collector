@@ -164,12 +164,20 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
     },
     // PRレビュー一覧を取得
     async getPullRequestReviews(ref: PullRequestRef): Promise<PullRequestReview[]> {
-      const { data } = await octokit.rest.pulls.listReviews({
-        owner: ref.repo.owner,
-        repo: ref.repo.name,
-        pull_number: ref.number,
-        per_page: 100,
-      });
+      const perPage = 100;
+      const data = [];
+      // GitHub APIは1回のリクエストで最大100件までしか取得できないため、ページネーションを処理する。
+      for (let page = 1; ; page += 1) {
+        const response = await octokit.rest.pulls.listReviews({
+          owner: ref.repo.owner,
+          repo: ref.repo.name,
+          pull_number: ref.number,
+          per_page: perPage,
+          page,
+        });
+        data.push(...response.data);
+        if (response.data.length < perPage) break;
+      }
       // Octokitの型をアプリ内型に変換して返す
       return data.map((review) => ({
         id: String(review.id),
