@@ -26,6 +26,13 @@ A modern, production-ready template for building full-stack React applications u
 - 開発サーバー: `DEV_SERVER_HOST` / `DEV_SERVER_PORT`（ViteはHTTPで待受。利用者アクセスはHTTPS終端を必須とする）
 - 例: [.env.example](.env.example)
 
+### OneDrive OAuth Token Store (Production Note)
+
+- 本番環境でのメモリ内 `tokenStore` 運用は非推奨です。
+- `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true` は一時回避用です。
+- メモリ運用のまま本番で再起動・再デプロイ・スケールアウトすると、OneDrive OAuth セッションは全喪失します。
+- 本番では Redis / DB などの永続ストア実装を必須にしてください。
+
 ### Installation
 
 Install the dependencies:
