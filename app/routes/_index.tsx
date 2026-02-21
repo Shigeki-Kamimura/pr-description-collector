@@ -15,6 +15,7 @@ import { ensureCsrfToken, verifyCsrfToken } from "../services/csrf.server";
 
 import { OneDriveAuthDialog } from "../components/OneDriveAuthDialog";
 import { SaveErrorDialog } from "../components/SaveErrorDialog";
+import { SavingDialog } from "../components/SavingDialog";
 import { SuccessDialog } from "../components/SuccessDialog";
 
 /**
@@ -484,6 +485,9 @@ export default function Index() {
       <OneDriveAuthDialog
         open={isAuthDialogOpen}
         onClose={() => setIsAuthDialogOpen(false)}
+      />
+      <SavingDialog
+        open={uploadFetcher.state !== "idle"}
       />
       <SaveErrorDialog
         open={isErrorDialogOpen}
