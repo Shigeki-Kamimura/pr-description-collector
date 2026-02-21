@@ -18,6 +18,11 @@ type DownloadImageOptions = {
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024;
+const DEFAULT_ALLOWED_IMAGE_HOSTS = [
+  "github.com",
+  "user-images.githubusercontent.com",
+  "github-production-user-asset-6210df.s3.amazonaws.com",
+];
 
 export type EvidenceDownloadSuccess = {
   bytes: Uint8Array;
@@ -194,6 +199,7 @@ function isLikelyImageUrl(rawUrl: string): boolean {
 // - "INVALID_URL": URLとして不正な文字列だった場合。
 // - "UNSUPPORTED_PROTOCOL": http: または https: 以外のスキームだった場合。
 // - "BLOCKED_PRIVATE_HOST": localhost やプライベートIPアドレスなど、アクセスがブロックされるホストだった場合。
+// - "BLOCKED_UNTRUSTED_HOST": 許可ドメイン以外のホストだった場合。
 // - "TIMEOUT": ダウンロードがタイムアウトした場合。abortController を使用して fetch を中断した結果。
 // - "NETWORK_ERROR": ネットワークエラーなどで fetch が失敗した場合。
 // - "HTTP_404", "HTTP_500" など: HTTPステータスコードが200以外で返ってきた場合。
@@ -333,7 +339,27 @@ function getBlockedHostReason(rawUrl: string): string | null {
     return "BLOCKED_PRIVATE_HOST";
   }
 
+  if (!isAllowedImageHost(host)) {
+    return "BLOCKED_UNTRUSTED_HOST";
+  }
+
   return null;
+}
+
+// ホストが許可ドメインリストにマッチするかどうかをチェックする。サブドメインも許可する。
+function isAllowedImageHost(host: string): boolean {
+  const allowedHosts = getAllowedImageHosts();
+  return allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+}
+// 環境変数から許可ドメインリストを取得する。未設定や空文字の場合はデフォルトリストを返す。
+function getAllowedImageHosts(): string[] {
+  const raw = process.env.ONEDRIVE_EVIDENCE_IMAGE_ALLOWED_HOSTS;
+  if (!raw) return DEFAULT_ALLOWED_IMAGE_HOSTS;
+  const parsed = raw
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => item.length > 0);
+  return parsed.length > 0 ? parsed : DEFAULT_ALLOWED_IMAGE_HOSTS;
 }
 // IPv6アドレスはURLで[ ]で括られることがあるため、括弧を取り除いて正規化する。
 function stripIpv6Brackets(host: string): string {

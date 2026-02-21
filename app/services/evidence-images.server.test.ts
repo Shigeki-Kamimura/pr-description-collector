@@ -55,7 +55,7 @@ describe("downloadImageWithRetry", () => {
           headers: { "content-type": "image/png" },
         }),
       );
-    const result = await downloadImageWithRetry("https://example.com/a.png", {
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/a.png", {
       timeoutMs: 1000,
       maxAttempts: 3,
       fetchFn,
@@ -76,7 +76,7 @@ describe("downloadImageWithRetry", () => {
       });
       return new Response();
     });
-    const result = await downloadImageWithRetry("https://example.com/slow.png", {
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/slow.png", {
       timeoutMs: 1,
       maxAttempts: 1,
       fetchFn,
@@ -102,6 +102,15 @@ describe("downloadImageWithRetry", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it("許可ドメイン外のURLは拒否する", async () => {
+    const fetchFn = vi.fn<typeof fetch>();
+    const result = await downloadImageWithRetry("https://example.com/a.png", {
+      fetchFn,
+    });
+    expect(result).toEqual({ ok: false, errorReason: "BLOCKED_UNTRUSTED_HOST" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   it("Content-Length が上限超過なら即時に失敗する", async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(new Uint8Array([1]), {
@@ -112,7 +121,7 @@ describe("downloadImageWithRetry", () => {
         },
       }),
     );
-    const result = await downloadImageWithRetry("https://example.com/large.png", {
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/large.png", {
       maxBytes: 10,
       maxAttempts: 1,
       fetchFn,
@@ -134,7 +143,7 @@ describe("downloadImageWithRetry", () => {
         headers: { "content-type": "image/png" },
       }),
     );
-    const result = await downloadImageWithRetry("https://example.com/stream.png", {
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/stream.png", {
       maxBytes: 10,
       maxAttempts: 1,
       fetchFn,
@@ -152,7 +161,7 @@ describe("downloadImageWithRetry", () => {
         },
       }),
     );
-    const result = await downloadImageWithRetry("https://example.com/small.png", {
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/small.png", {
       maxBytes: 4,
       maxAttempts: 1,
       fetchFn,
