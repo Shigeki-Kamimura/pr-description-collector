@@ -287,7 +287,7 @@ export default function Index() {
         <h2>Fetch from GitHub</h2>
         <div className="annotation-wrapper" aria-live="polite">
           {!collectFetcher.data?.ok ? (
-            <p className="annotation-text">Get Description を押してから保存してください。</p>
+            <p className="annotation-text">Get Description は取得のみです。保存（画像含む）は Save to OneDrive で実行します。</p>
           ) : null}
           {showPrRefAnnotation ? (
             <p className="annotation-text-small">
@@ -366,7 +366,7 @@ export default function Index() {
                 !prRefValidation.ok
               }
             >
-              Get Description
+              Get Description (Fetch Only)
             </button>
             <a className="btn connect-one-drive-btn" href="/auth/onedrive/login">
               Connect OneDrive
@@ -394,7 +394,7 @@ export default function Index() {
                 !isSaveTargetInSync
               }
             >
-              Save to OneDrive
+              Save to OneDrive (with images)
             </button>
 
             <Form method="post" className="form">
@@ -494,6 +494,7 @@ export default function Index() {
       <SuccessDialog
         open={isSuccessDialogOpen}
         onClose={() => setIsSuccessDialogOpen(false)}
+        evidenceImages={uploadFetcher.data?.ok ? uploadFetcher.data.evidenceImages : null}
       />
     </main>
   );

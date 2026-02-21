@@ -16,14 +16,26 @@ import {
 import { getHttpStatus } from "../services/http-status";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
+// CSRFトークンの検証ユーティリティ
+import {
+  buildImageBaseName,
+  downloadImageWithRetry,
+  extractUniqueImageUrls,
+} from "../services/evidence-images.server";
 import { parseChecklist } from "../services/checklist";
 import { verifyCsrfToken } from "../services/csrf.server";
 import { validatePrRefInput } from "../services/validation";
 
+// ルートハンドラーとビジネスロジックを分離するため、OneDrive への保存処理の詳細は services/evidence-images.server.ts に委譲する。
 export type ApiOneDriveUploadResponse =
   | {
       ok: true;
       folderPath: string;
+      evidenceImages: {
+        total: number;
+        success: number;
+        failed: number;
+      };
       uploaded: {
         descriptionMd: { name: string; webUrl: string };
         archiveJson: { name: string; webUrl: string };
@@ -36,6 +48,21 @@ export type ApiOneDriveUploadResponse =
       errorCode?: string;
       errorMessage?: string;
     };
+    
+/* OneDrive への保存処理中のエラーは、認証エラーかどうかに関わらず基本的には 502 として返す。
+// ただし、認証エラーと判断できる場合は 401 とする。
+// これにより、UI側で認証エラーとそれ以外のエラーを区別して適切なユーザーメッセージを表示できるようになる。
+*/
+type EvidenceImageStatus = "success" | "failed";
+
+type EvidenceImageRecord = {
+  sourceUrl: string;
+  status: EvidenceImageStatus;
+  fileName: string | null;
+  onedrivePath: string | null;
+  errorReason: string | null;
+};
+
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const validation = validatePrRefInput(formData);
@@ -108,6 +135,7 @@ export async function action({ request }: ActionFunctionArgs) {
     // description.md と archive.json の両方を保存する。description.md の保存に成功してから archive.json の保存に失敗した場合は、description.md を削除するロールバックを試みる。
     let descriptionMd: { name: string; webUrl: string } | null = null;
     let archiveJson: { name: string; webUrl: string } | null = null;
+    let evidenceImages: EvidenceImageRecord[] = [];
     // ロールバックの試行状況と結果を記録する変数。これにより、部分的に成功した状態で失敗した場合の状況を詳細にログに残せるようになる。
     let rollbackAttempted = false;
     let rollbackSucceeded = false;
@@ -117,6 +145,11 @@ export async function action({ request }: ActionFunctionArgs) {
     try {
       failureDomain = "onedrive"; // 明示的に失敗ドメインを切り替える。ここで失敗した場合はロールバックの必要はないため、以降は failureDomain を変更しない。
       descriptionMd = await onedrive.saveText(descriptionPath, pullRequest.body);
+      evidenceImages = await saveEvidenceImages({
+        markdown: pullRequest.body,
+        folderPath,
+        onedrive,
+      });
       archiveJson = await onedrive.saveText(
         archivePath,
         JSON.stringify(
@@ -136,7 +169,7 @@ export async function action({ request }: ActionFunctionArgs) {
             checklist: {
               items: checklist.items,
             },
-            evidenceImages: [],
+            evidenceImages,
           },
           null,
           2,
@@ -179,10 +212,12 @@ export async function action({ request }: ActionFunctionArgs) {
         : "rollback=not-attempted";
       throw new Error(`${raw} | partial-write: description.md saved then archive.json failed; ${rollbackInfo}`);
     }
+    const evidenceSummary = summarizeEvidenceImages(evidenceImages);
     return Response.json(
       {
         ok: true,
         folderPath,
+        evidenceImages: evidenceSummary,
         uploaded: {
           descriptionMd: { name: descriptionMd.name, webUrl: descriptionMd.webUrl },
           archiveJson: { name: archiveJson.name, webUrl: archiveJson.webUrl },
@@ -341,4 +376,142 @@ function slugifyForPath(value: string): string {
   }
 
   return result;
+}
+
+/* 
+/ 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
+/ これらの機能を提供する関数は services/evidence-images.server.ts に切り出している。
+*/
+type EvidenceSaveDependencies = {
+  saveBinary: (path: string, content: Uint8Array, contentType?: string) => Promise<{ name: string; webUrl: string }>;
+  getItem: (path: string) => Promise<{ name: string; webUrl: string } | null>;
+};
+
+async function saveEvidenceImages({
+  markdown,
+  folderPath,
+  onedrive,
+}: {
+  markdown: string;
+  folderPath: string;
+  onedrive: EvidenceSaveDependencies;
+}): Promise<EvidenceImageRecord[]> {
+  const urls = extractUniqueImageUrls(markdown);
+  if (urls.length === 0) return [];
+
+  const imagesFolder = `${folderPath}/imgs`;
+  const reservedNames = new Set<string>();
+  const results: EvidenceImageRecord[] = [];
+
+  for (const sourceUrl of urls) {
+    const downloaded = await downloadImageWithRetry(sourceUrl, {
+      timeoutMs: 180_000,
+      maxAttempts: 3,
+    });
+    if ("ok" in downloaded) {
+      results.push({
+        sourceUrl,
+        status: "failed",
+        fileName: null,
+        onedrivePath: null,
+        errorReason: downloaded.errorReason,
+      });
+      continue;
+    }
+
+    try {
+      const baseName = buildImageBaseName(sourceUrl, downloaded.contentType);
+      const fileName = await resolveEvidenceFileName({
+        onedrive,
+        folderPath: imagesFolder,
+        baseName,
+        reservedNames,
+      });
+      const onedrivePath = `${imagesFolder}/${fileName}`;
+      await onedrive.saveBinary(onedrivePath, downloaded.bytes, downloaded.contentType ?? undefined);
+      results.push({
+        sourceUrl,
+        status: "success",
+        fileName,
+        onedrivePath,
+        errorReason: null,
+      });
+    } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      if (isOneDriveAuthLikeError(rawMessage)) {
+        throw error;
+      }
+      const parsed = extractOneDriveError(rawMessage);
+      results.push({
+        sourceUrl,
+        status: "failed",
+        fileName: null,
+        onedrivePath: null,
+        errorReason: parsed.code
+          ? `${parsed.code}: ${parsed.message ?? "save failed"}`
+          : parsed.message ?? rawMessage,
+      });
+    }
+  }
+  return results;
+}
+
+async function resolveEvidenceFileName({
+  onedrive,
+  folderPath,
+  baseName,
+  reservedNames,
+}: {
+  onedrive: EvidenceSaveDependencies;
+  folderPath: string;
+  baseName: string;
+  reservedNames: Set<string>;
+}): Promise<string> {
+  const { stem, ext } = splitFileName(baseName);
+  for (let index = 0; index < 5000; index += 1) {
+    const suffix = index === 0 ? "" : `-${index}`;
+    const candidate = `${stem}${suffix}${ext}`;
+    if (reservedNames.has(candidate)) {
+      continue;
+    }
+    const path = `${folderPath}/${candidate}`;
+    const existing = await onedrive.getItem(path);
+    if (!existing) {
+      reservedNames.add(candidate);
+      return candidate;
+    }
+  }
+  throw new Error(`Failed to allocate image filename: ${baseName}`);
+}
+
+function splitFileName(fileName: string): { stem: string; ext: string } {
+  const dotIndex = fileName.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === fileName.length - 1) {
+    return { stem: fileName, ext: "" };
+  }
+  return {
+    stem: fileName.slice(0, dotIndex),
+    ext: fileName.slice(dotIndex),
+  };
+}
+
+function summarizeEvidenceImages(records: EvidenceImageRecord[]): {
+  total: number;
+  success: number;
+  failed: number;
+} {
+  let success = 0;
+  let failed = 0;
+  for (const record of records) {
+    if (record.status === "success") {
+      success += 1;
+    } else {
+      failed += 1;
+    }
+  }
+  return {
+    total: records.length,
+    success,
+    failed,
+  };
 }
