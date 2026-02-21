@@ -406,6 +406,45 @@ describe("api.onedrive.upload action", () => {
     expect(onedrive.saveText).toHaveBeenCalledTimes(1);
   });
 
+  it("画像保存途中の認証切れでは保存済み画像をロールバック削除する", async () => {
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: "![a](https://example.com/a.png)\n![b](https://example.com/b.png)",
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue([
+      "https://example.com/a.png",
+      "https://example.com/b.png",
+    ]);
+    vi.mocked(buildImageBaseName).mockReturnValue("image.png");
+    vi.mocked(downloadImageWithRetry)
+      .mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([2]), contentType: "image/png" });
+    onedrive.saveText.mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" });
+    onedrive.saveBinary
+      .mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/image.png" })
+      .mockRejectedValueOnce(
+        new Error("OneDrive API error (401) [code=InvalidAuthenticationToken]: token expired"),
+      );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; isAuthError: boolean };
+
+    expect(response.status).toBe(401);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(true);
+    const deletedPaths = onedrive.deleteItem.mock.calls.map((args) => args[0] as string);
+    expect(deletedPaths).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("/PullRequests/PR123-Test-PR/imgs/image.png"),
+        expect.stringContaining("/PullRequests/PR123-Test-PR/description.md"),
+      ]),
+    );
+  });
+
   it("非画像Content-Typeは保存せず failed として記録する", async () => {
     github.getPullRequest.mockResolvedValueOnce({
       number: 123,

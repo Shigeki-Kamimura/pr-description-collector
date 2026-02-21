@@ -62,6 +62,23 @@ type EvidenceImageRecord = {
   onedrivePath: string | null;
   errorReason: string | null;
 };
+const DEFAULT_EVIDENCE_IMAGE_MAX_KB = 10 * 1024;
+const BYTES_PER_KILOBYTE = 1024;
+
+/*
+/ 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
+/ これらの機能を提供する関数は services/evidence-images.server.ts に切り出している。
+/ これにより、これらの機能の実装を変更する際に、ルートハンドラーのコードを変更せずに済むようになる。 
+*/
+class EvidenceImagesSaveError extends Error {
+  readonly savedImagePaths: string[];
+
+  constructor(message: string, savedImagePaths: string[]) {
+    super(message);
+    this.name = "EvidenceImagesSaveError";
+    this.savedImagePaths = savedImagePaths;
+  }
+}
 
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
@@ -140,6 +157,7 @@ export async function action({ request }: ActionFunctionArgs) {
     let rollbackAttempted = false;
     let rollbackSucceeded = false;
     let rollbackFailureReason = "unknown";
+    let rollbackEvidenceCleanup = "not-attempted";
     let rollbackFolderCleanup = "not-attempted";
 
     try {
@@ -178,6 +196,35 @@ export async function action({ request }: ActionFunctionArgs) {
     } catch (writeError) {
       if (descriptionMd && !archiveJson) {
         rollbackAttempted = true;
+        const savedEvidencePaths = collectSavedEvidencePaths(evidenceImages, writeError);
+        // description.md は保存されたがarchive.jsonの保存に失敗した場合、description.mdとevidenceImagesで保存された画像を削除するロールバックを試みる。
+        if (savedEvidencePaths.length > 0) {
+          rollbackEvidenceCleanup = "ok";
+          for (const imagePath of savedEvidencePaths) {
+            try {
+              await onedrive.deleteItem(imagePath);
+            } catch (imageCleanupError) {
+              const reason = imageCleanupError instanceof Error ? imageCleanupError.message : String(imageCleanupError);
+              rollbackEvidenceCleanup = `failed (${reason.trim() || "unknown"})`;
+              console.warn("OneDrive rollback image cleanup skipped.", {
+                imagePath,
+                reason,
+              });
+            }
+          }
+          try {
+            await onedrive.deleteItem(`${folderPath}/imgs`);
+          } catch (imagesFolderCleanupError) {
+            const reason =
+              imagesFolderCleanupError instanceof Error
+                ? imagesFolderCleanupError.message
+                : String(imagesFolderCleanupError);
+            console.warn("OneDrive rollback images folder cleanup skipped.", {
+              folderPath,
+              reason,
+            });
+          }
+        }
         try {
           await onedrive.deleteItem(descriptionPath);
           rollbackSucceeded = true;
@@ -207,7 +254,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       const rollbackInfo = rollbackAttempted
         ? rollbackSucceeded
-          ? `rollback=ok folderCleanup=${rollbackFolderCleanup}`
+          ? `rollback=ok evidenceCleanup=${rollbackEvidenceCleanup} folderCleanup=${rollbackFolderCleanup}`
           : `rollback=failed (${rollbackFailureReason})`
         : "rollback=not-attempted";
       throw new Error(`${raw} | partial-write: description.md saved then archive.json failed; ${rollbackInfo}`);
@@ -329,6 +376,27 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 }
 
+/* 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定する、
+/ これらの機能を提供する関数は services/evidence-images.server.ts に切り出しているため、
+/ ここでは保存された画像のパスを収集するロジックのみを実装する
+ */
+function collectSavedEvidencePaths(
+  evidenceImages: EvidenceImageRecord[],
+  writeError: unknown,
+): string[] {
+  const paths = new Set<string>();
+  for (const record of evidenceImages) {
+    if (record.status !== "success" || !record.onedrivePath) continue;
+    paths.add(record.onedrivePath);
+  }
+  if (writeError instanceof EvidenceImagesSaveError) {
+    for (const path of writeError.savedImagePaths) {
+      if (path) paths.add(path);
+    }
+  }
+  return Array.from(paths);
+}
+
 function formatIsoForJst(date: Date): string {
   const offsetMinutes = 9 * 60;
   const offsetMs = offsetMinutes * 60 * 1000;
@@ -402,11 +470,13 @@ async function saveEvidenceImages({
   const imagesFolder = `${folderPath}/imgs`;
   const reservedNames = new Set<string>();
   const results: EvidenceImageRecord[] = [];
+  const maxImageBytes = getEvidenceImageMaxBytes();
 
   for (const sourceUrl of urls) {
     const downloaded = await downloadImageWithRetry(sourceUrl, {
       timeoutMs: 180_000,
       maxAttempts: 3,
+      maxBytes: maxImageBytes,
     });
     if ("ok" in downloaded) {
       results.push({
@@ -450,8 +520,13 @@ async function saveEvidenceImages({
       });
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : String(error);
+      // OneDrive への保存に失敗した場合、認証エラーっぽいかどうかに関わらず、まずはエラーメッセージを解析してみる。
+      // これにより、OneDrive API のエラーレスポンスの形式が変わったり、予期しないエラーが発生した場合でも、ユーザーには再認証が必要な可能性があることを伝えることができる。
       if (isOneDriveAuthLikeError(rawMessage)) {
-        throw error;
+        const savedPaths = results
+          .filter((record) => record.status === "success" && record.onedrivePath)
+          .map((record) => record.onedrivePath as string);
+        throw new EvidenceImagesSaveError(rawMessage, savedPaths);
       }
       const parsed = extractOneDriveError(rawMessage);
       results.push({
@@ -466,6 +541,23 @@ async function saveEvidenceImages({
     }
   }
   return results;
+}
+
+function getEvidenceImageMaxBytes(): number {
+  const kbRaw = process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_KB;
+  const parsedKb = Number.parseInt(kbRaw ?? "", 10);
+  if (Number.isFinite(parsedKb) && parsedKb > 0) {
+    return parsedKb * BYTES_PER_KILOBYTE;
+  }
+
+  // 後方互換: 旧bytes設定が残っている環境でも動作を維持する。
+  const bytesRaw = process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_BYTES;
+  const parsedBytes = Number.parseInt(bytesRaw ?? "", 10);
+  if (Number.isFinite(parsedBytes) && parsedBytes > 0) {
+    return parsedBytes;
+  }
+
+  return DEFAULT_EVIDENCE_IMAGE_MAX_KB * BYTES_PER_KILOBYTE;
 }
 
 // Content-Type ヘッダーから画像の拡張子を推測して、ファイル名のベース部分を生成する。

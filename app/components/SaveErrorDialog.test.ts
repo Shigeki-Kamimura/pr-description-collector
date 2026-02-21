@@ -16,7 +16,7 @@ describe("formatPartialWriteErrorMessage", () => {
       "OneDrive API error (500): write failed | partial-write: description.md saved then archive.json failed; rollback=failed (permission denied)",
     );
     expect(message).toBe(
-      "保存に失敗しました。再試行してください。解決しない場合は管理者にお問い合わせください。",
+      "保存中にエラーが発生したため、画像保存を取り消しました。再認証または時間をおいて再実行してください。",
     );
   });
 
