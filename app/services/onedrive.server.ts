@@ -335,7 +335,7 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
           headers: {
             "Content-Type": "text/plain; charset=utf-8",
           },
-          body: content,
+          body: content as unknown as BodyInit,
         },
       );
 
@@ -353,7 +353,6 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
       }
 
       const encoded = encodeDrivePath(normalized);
-      const binary = Uint8Array.from(content);
       const item = await graphJson<GraphDriveItem>(
         auth.accessToken,
         `/me/drive/root:/${encoded}:/content`,
@@ -362,7 +361,7 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
           headers: {
             "Content-Type": contentType ?? "application/octet-stream",
           },
-          body: new Blob([binary], { type: contentType ?? "application/octet-stream" }),
+          body: content as unknown as BodyInit,
         },
       );
       return toDriveItem(item);
