@@ -12,10 +12,12 @@
 type DownloadImageOptions = {
   timeoutMs: number;
   maxAttempts: number;
+  maxBytes: number;
   fetchFn?: typeof fetch;
 };
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024;
 
 export type EvidenceDownloadSuccess = {
   bytes: Uint8Array;
@@ -195,12 +197,14 @@ function isLikelyImageUrl(rawUrl: string): boolean {
 // - "TIMEOUT": ダウンロードがタイムアウトした場合。abortController を使用して fetch を中断した結果。
 // - "NETWORK_ERROR": ネットワークエラーなどで fetch が失敗した場合。
 // - "HTTP_404", "HTTP_500" など: HTTPステータスコードが200以外で返ってきた場合。
+// - "PAYLOAD_TOO_LARGE": ダウンロードサイズが上限を超えた場合。
 // - "UNEXPECTED_ERROR: <message>": 上記以外の予期しないエラーが発生した場合。
 export async function downloadImageWithRetry(
   url: string,
   {
     timeoutMs = 180_000,
     maxAttempts = 3,
+    maxBytes = DEFAULT_MAX_DOWNLOAD_BYTES,
     fetchFn = fetch,
   }: Partial<DownloadImageOptions> = {},
 ): Promise<EvidenceDownloadSuccess | EvidenceDownloadFailure> {
@@ -227,13 +231,20 @@ export async function downloadImageWithRetry(
         }
         return { ok: false, errorReason: reason };
       }
+      const contentLength = getContentLength(response.headers.get("content-length"));
+      if (contentLength !== null && contentLength > maxBytes) {
+        return { ok: false, errorReason: "PAYLOAD_TOO_LARGE" };
+      }
       const contentType = response.headers.get("content-type");
-      const data = new Uint8Array(await response.arrayBuffer());
+      const data = await readResponseBytesWithLimit(response, maxBytes);
       return {
         bytes: data,
         contentType,
       };
     } catch (error) {
+      if (error instanceof Error && error.message === "PAYLOAD_TOO_LARGE") {
+        return { ok: false, errorReason: "PAYLOAD_TOO_LARGE" };
+      }
       if (error instanceof DOMException && error.name === "AbortError") {
         lastReason = "TIMEOUT";
         if (attempt < maxAttempts) continue;
@@ -251,6 +262,46 @@ export async function downloadImageWithRetry(
     }
   }
   return { ok: false, errorReason: lastReason };
+}
+
+function getContentLength(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+async function readResponseBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const body = response.body;
+  if (!body) return new Uint8Array(await response.arrayBuffer());
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch {
+        // noop
+      }
+      throw new Error("PAYLOAD_TOO_LARGE");
+    }
+    chunks.push(value);
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
 }
 
 // URLのホストがブロック対象かどうかをチェックする。理由があれば文字列で返し、問題なければ null を返す。

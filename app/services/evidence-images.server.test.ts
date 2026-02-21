@@ -101,6 +101,66 @@ describe("downloadImageWithRetry", () => {
     expect(result).toEqual({ ok: false, errorReason: "BLOCKED_PRIVATE_HOST" });
     expect(fetchFn).not.toHaveBeenCalled();
   });
+
+  it("Content-Length が上限超過なら即時に失敗する", async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(new Uint8Array([1]), {
+        status: 200,
+        headers: {
+          "content-type": "image/png",
+          "content-length": String(11),
+        },
+      }),
+    );
+    const result = await downloadImageWithRetry("https://example.com/large.png", {
+      maxBytes: 10,
+      maxAttempts: 1,
+      fetchFn,
+    });
+    expect(result).toEqual({ ok: false, errorReason: "PAYLOAD_TOO_LARGE" });
+  });
+
+  it("Content-Length 未設定でも実バイトが上限超過なら失敗する", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3, 4, 5, 6]));
+        controller.enqueue(new Uint8Array([7, 8, 9, 10, 11]));
+        controller.close();
+      },
+    });
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      }),
+    );
+    const result = await downloadImageWithRetry("https://example.com/stream.png", {
+      maxBytes: 10,
+      maxAttempts: 1,
+      fetchFn,
+    });
+    expect(result).toEqual({ ok: false, errorReason: "PAYLOAD_TOO_LARGE" });
+  });
+
+  it("サイズが上限以下なら成功する", async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4]), {
+        status: 200,
+        headers: {
+          "content-type": "image/png",
+          "content-length": "4",
+        },
+      }),
+    );
+    const result = await downloadImageWithRetry("https://example.com/small.png", {
+      maxBytes: 4,
+      maxAttempts: 1,
+      fetchFn,
+    });
+    expect("ok" in result).toBe(false);
+    if ("ok" in result) return;
+    expect(result.bytes.byteLength).toBe(4);
+  });
 });
 
 describe("buildImageBaseName", () => {

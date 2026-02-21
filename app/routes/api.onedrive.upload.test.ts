@@ -342,6 +342,47 @@ describe("api.onedrive.upload action", () => {
     });
   });
 
+  it("同名画像が既存でも getItem 連打せずローカル採番で保存する", async () => {
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: "![a](https://example.com/a.png)\n![b](https://example.com/b.png)",
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue([
+      "https://example.com/a.png",
+      "https://example.com/b.png",
+    ]);
+    vi.mocked(buildImageBaseName).mockReturnValue("image.png");
+    vi.mocked(downloadImageWithRetry)
+      .mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([2]), contentType: "image/png" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/existing-image" });
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+
+    const response = await action({ request: buildRequest() } as never);
+
+    expect(response.status).toBe(200);
+    expect(onedrive.getItem).toHaveBeenCalledTimes(1);
+    expect(onedrive.saveBinary).toHaveBeenCalledTimes(2);
+    expect(onedrive.saveBinary).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("/imgs/image-1.png"),
+      expect.any(Uint8Array),
+      "image/png",
+    );
+    expect(onedrive.saveBinary).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("/imgs/image-2.png"),
+      expect.any(Uint8Array),
+      "image/png",
+    );
+  });
+
   it("画像保存中のOneDrive認証切れは中断して401を返す", async () => {
     github.getPullRequest.mockResolvedValueOnce({
       number: 123,
