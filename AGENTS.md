@@ -177,6 +177,44 @@ If TECH_STACK_JP is empty:
 ---
 
 ############################################################
+# File Header Comment Policy (optional, configurable)
+############################################################
+
+FILE_HEADER_COMMENT_MODE = "new_and_boundary"
+# Allowed:
+# - "off"             : do not emit file header comments
+# - "new_only"        : only for newly created files
+# - "new_and_boundary": new files + boundary/high-risk areas only (default)
+# - "always"          : always emit (discouraged)
+
+HEADER_COMMENT_TRIGGERS = """
+Emit a file header comment when:
+- New file is created, AND
+- One of:
+  - boundary layer (api route/controller/service adapter)
+  - external integration (OneDrive, payments, auth)
+  - user-facing UI component with async/side effects
+  - high-risk area (db/auth/deps/build/secrets)
+Otherwise: no header comment.
+"""
+
+HEADER_COMMENT_TEMPLATE_JP = """
+/*
+  <概要: 1行>
+
+  このファイルを用意した理由:
+  - <理由1>
+  - <理由2>
+
+  このファイルが使われる場面:
+  - <entry point / feature / route / job> のとき
+
+  関連:
+  - <PR/Issue/ADR>（任意）
+*/
+"""
+
+############################################################
 # Core Priorities
 ############################################################
 
