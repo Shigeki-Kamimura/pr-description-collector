@@ -83,6 +83,24 @@ describe("downloadImageWithRetry", () => {
     });
     expect(result).toEqual({ ok: false, errorReason: "TIMEOUT" });
   });
+
+  it("localhost 宛てURLは SSRF ガードで拒否する", async () => {
+    const fetchFn = vi.fn<typeof fetch>();
+    const result = await downloadImageWithRetry("http://localhost/internal.png", {
+      fetchFn,
+    });
+    expect(result).toEqual({ ok: false, errorReason: "BLOCKED_PRIVATE_HOST" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("リンクローカルIP宛てURLは SSRF ガードで拒否する", async () => {
+    const fetchFn = vi.fn<typeof fetch>();
+    const result = await downloadImageWithRetry("http://169.254.169.254/latest/meta-data/", {
+      fetchFn,
+    });
+    expect(result).toEqual({ ok: false, errorReason: "BLOCKED_PRIVATE_HOST" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
 });
 
 describe("buildImageBaseName", () => {

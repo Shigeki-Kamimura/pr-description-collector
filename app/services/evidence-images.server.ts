@@ -188,7 +188,14 @@ function isLikelyImageUrl(rawUrl: string): boolean {
     return false;
   }
 }
-
+// EvidenceDownloadFailure の errorReason 値の例:
+// - "INVALID_URL": URLとして不正な文字列だった場合。
+// - "UNSUPPORTED_PROTOCOL": http: または https: 以外のスキームだった場合。
+// - "BLOCKED_PRIVATE_HOST": localhost やプライベートIPアドレスなど、アクセスがブロックされるホストだった場合。
+// - "TIMEOUT": ダウンロードがタイムアウトした場合。abortController を使用して fetch を中断した結果。
+// - "NETWORK_ERROR": ネットワークエラーなどで fetch が失敗した場合。
+// - "HTTP_404", "HTTP_500" など: HTTPステータスコードが200以外で返ってきた場合。
+// - "UNEXPECTED_ERROR: <message>": 上記以外の予期しないエラーが発生した場合。
 export async function downloadImageWithRetry(
   url: string,
   {
@@ -197,6 +204,11 @@ export async function downloadImageWithRetry(
     fetchFn = fetch,
   }: Partial<DownloadImageOptions> = {},
 ): Promise<EvidenceDownloadSuccess | EvidenceDownloadFailure> {
+  // 事前にURLのホストがブロック対象かどうかをチェックする。
+  const blockedReason = getBlockedHostReason(url);
+  if (blockedReason) {
+    return { ok: false, errorReason: blockedReason };
+  }
   let lastReason = "unknown";
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController();
@@ -239,6 +251,85 @@ export async function downloadImageWithRetry(
     }
   }
   return { ok: false, errorReason: lastReason };
+}
+
+// URLのホストがブロック対象かどうかをチェックする。理由があれば文字列で返し、問題なければ null を返す。
+function getBlockedHostReason(rawUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return "INVALID_URL";
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "UNSUPPORTED_PROTOCOL";
+  }
+
+  let host = parsed.hostname.trim().toLowerCase();
+  if (!host) return "INVALID_HOST";
+  host = stripIpv6Brackets(host);
+
+  if (host === "localhost" || host.endsWith(".localhost")) {
+    return "BLOCKED_PRIVATE_HOST";
+  }
+
+  if (isPrivateIpv4(host)) {
+    return "BLOCKED_PRIVATE_HOST";
+  }
+
+  if (isPrivateIpv6(host)) {
+    return "BLOCKED_PRIVATE_HOST";
+  }
+
+  return null;
+}
+// IPv6アドレスはURLで[ ]で括られることがあるため、括弧を取り除いて正規化する。
+function stripIpv6Brackets(host: string): string {
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return host.slice(1, -1);
+  }
+  return host;
+}
+// RFC 1918, RFC 3330, RFC 6598 に定義されたプライベートIPv4アドレスを拒否する。
+function isPrivateIpv4(host: string): boolean {
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4) return false;
+  const octets = ipv4.slice(1).map((part) => Number.parseInt(part, 10));
+  if (octets.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return false;
+  const [a, b] = octets;
+
+  // loopback, private, link-local, CGNAT, unspecified を拒否する。
+  return (
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    a === 0
+  );
+}
+// RFC 4193 の Unique Local Address と RFC 4291 の Link-Local Address を拒否する。
+function isPrivateIpv6(host: string): boolean {
+  const normalized = host.toLowerCase();
+  if (!normalized.includes(":")) return false;
+
+  if (normalized === "::1" || normalized === "::") return true;
+
+  if (normalized.startsWith("::ffff:")) {
+    return isPrivateIpv4(normalized.slice("::ffff:".length));
+  }
+
+  const firstSegment = normalized.split(":")[0] ?? "";
+  const first = Number.parseInt(firstSegment || "0", 16);
+  if (Number.isNaN(first)) return false;
+
+  // fc00::/7 (ULA), fe80::/10 (link-local)
+  if (first >= 0xfc00 && first <= 0xfdff) return true;
+  if (first >= 0xfe80 && first <= 0xfebf) return true;
+
+  return false;
 }
 
 function normalizeFileNameSegment(value: string): string {

@@ -365,6 +365,37 @@ describe("api.onedrive.upload action", () => {
     expect(onedrive.saveText).toHaveBeenCalledTimes(1);
   });
 
+  it("非画像Content-Typeは保存せず failed として記録する", async () => {
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: "![a](https://example.com/a.png)",
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue(["https://example.com/a.png"]);
+    vi.mocked(downloadImageWithRetry).mockResolvedValueOnce({
+      bytes: new Uint8Array([1, 2, 3]),
+      contentType: "text/html",
+    });
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+
+    const response = await action({ request: buildRequest() } as never);
+    expect(response.status).toBe(200);
+    expect(onedrive.saveBinary).not.toHaveBeenCalled();
+    const archiveBody = JSON.parse(onedrive.saveText.mock.calls[1][1] as string) as {
+      evidenceImages: Array<{ status: string; errorReason: string | null }>;
+    };
+    expect(archiveBody.evidenceImages).toHaveLength(1);
+    expect(archiveBody.evidenceImages[0]).toMatchObject({
+      status: "failed",
+      errorReason: "UNSUPPORTED_CONTENT_TYPE: text/html",
+    });
+  });
+
   it.each([
     {
       status: 401,

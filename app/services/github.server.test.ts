@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createGitHubService } from "./github.server";
 
-const octokitInstances: Array<{ rest: { pulls: { listReviews: ReturnType<typeof vi.fn> } } }> = [];
+const octokitInstances: Array<{
+  rest: { pulls: { get: ReturnType<typeof vi.fn>; listReviews: ReturnType<typeof vi.fn> } };
+}> = [];
 
 vi.mock("octokit", () => ({
   Octokit: class {
@@ -25,6 +27,7 @@ describe("github service pagination", () => {
   beforeEach(() => {
     octokitInstances.length = 0;
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it("getPullRequestReviews は 100件超のとき次ページも取得する", async () => {
@@ -69,5 +72,21 @@ describe("github service pagination", () => {
       2,
       expect.objectContaining({ per_page: 100, page: 2 }),
     );
+  });
+
+  it("GitHub API応答がない場合はタイムアウトで失敗する", async () => {
+    vi.useFakeTimers();
+    const service = createGitHubService({ token: "token" });
+    const octokit = octokitInstances[0];
+    octokit.rest.pulls.get.mockReturnValue(new Promise(() => {}) as never);
+
+    const requestPromise = service.getPullRequest({
+      repo: { owner: "octocat", name: "hello-world" },
+      number: 123,
+    });
+
+    const assertion = expect(requestPromise).rejects.toThrow(/timed out after \d+ms/);
+    await vi.advanceTimersByTimeAsync(180_000);
+    await assertion;
   });
 });

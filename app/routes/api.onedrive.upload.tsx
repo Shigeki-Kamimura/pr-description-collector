@@ -418,6 +418,18 @@ async function saveEvidenceImages({
       });
       continue;
     }
+    // ダウンロードは成功したが、Content-Type が画像でない場合は保存せずに失敗とする。
+    // これにより、誤ってHTMLやJSONなどの非画像を保存してしまうリスクを減らす。
+    if (!isImageContentType(downloaded.contentType)) {
+      results.push({
+        sourceUrl,
+        status: "failed",
+        fileName: null,
+        onedrivePath: null,
+        errorReason: `UNSUPPORTED_CONTENT_TYPE: ${downloaded.contentType ?? "unknown"}`,
+      });
+      continue;
+    }
 
     try {
       const baseName = buildImageBaseName(sourceUrl, downloaded.contentType);
@@ -456,6 +468,14 @@ async function saveEvidenceImages({
   return results;
 }
 
+// Content-Type ヘッダーから画像の拡張子を推測して、ファイル名のベース部分を生成する。
+// URLのパスから拡張子が取れる場合はそれを優先する。
+function isImageContentType(contentType: string | null): boolean {
+  if (!contentType) return false;
+  const mime = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  return mime.startsWith("image/");
+}
+// 画像の拡張子を推測するための簡易マッピング。Content-Type が image/jpeg の場合は .jpg とするなど、一般的なケースをカバーする。
 async function resolveEvidenceFileName({
   onedrive,
   folderPath,
@@ -484,6 +504,7 @@ async function resolveEvidenceFileName({
   throw new Error(`Failed to allocate image filename: ${baseName}`);
 }
 
+// ファイル名を拡張子とベース名に分割する。拡張子がない場合は ext を空文字列とする。
 function splitFileName(fileName: string): { stem: string; ext: string } {
   const dotIndex = fileName.lastIndexOf(".");
   if (dotIndex <= 0 || dotIndex === fileName.length - 1) {
@@ -494,7 +515,8 @@ function splitFileName(fileName: string): { stem: string; ext: string } {
     ext: fileName.slice(dotIndex),
   };
 }
-
+// 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
+// これらの機能を提供する関数は services/evidence-images.server.ts に切り出している。
 function summarizeEvidenceImages(records: EvidenceImageRecord[]): {
   total: number;
   success: number;

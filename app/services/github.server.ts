@@ -15,6 +15,38 @@
 import { Octokit } from "octokit";
 import { createAppAuth } from "@octokit/auth-app";
 
+const DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS = 180;
+
+function parseTimeoutMs(value: string | undefined, fallback: number): number {
+  const parsedSeconds = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) return fallback;
+  return parsedSeconds * 1000;
+}
+
+const GITHUB_REQUEST_TIMEOUT_MS = parseTimeoutMs(
+  process.env.GITHUB_REQUEST_TIMEOUT_MS,
+  DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS * 1000,
+);
+
+function withRequestTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`GitHub API request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
+
 export type GitHubAuth = {
   /** GitHub Personal Access Token または GITHUB_TOKEN */
   token: string;
@@ -138,11 +170,14 @@ export async function createGitHubServiceFromEnv(): Promise<GitHubService> {
 function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
   // Octokit生成手段（PAT/GitHub Appなど）を差し替え可能にするための薄いラッパー。
   const getPullRequest = async (ref: PullRequestRef): Promise<PullRequest> => {
-    const { data } = await octokit.rest.pulls.get({
-      owner: ref.repo.owner,
-      repo: ref.repo.name,
-      pull_number: ref.number,
-    });
+    const { data } = await withRequestTimeout(
+      octokit.rest.pulls.get({
+        owner: ref.repo.owner,
+        repo: ref.repo.name,
+        pull_number: ref.number,
+      }),
+      GITHUB_REQUEST_TIMEOUT_MS,
+    );
     // Octokitの型をアプリ内型に変換して返す
     return {
       id: String(data.id),
@@ -168,13 +203,16 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
       const data = [];
       // GitHub APIは1回のリクエストで最大100件までしか取得できないため、ページネーションを処理する。
       for (let page = 1; ; page += 1) {
-        const response = await octokit.rest.pulls.listReviews({
-          owner: ref.repo.owner,
-          repo: ref.repo.name,
-          pull_number: ref.number,
-          per_page: perPage,
-          page,
-        });
+        const response = await withRequestTimeout(
+          octokit.rest.pulls.listReviews({
+            owner: ref.repo.owner,
+            repo: ref.repo.name,
+            pull_number: ref.number,
+            per_page: perPage,
+            page,
+          }),
+          GITHUB_REQUEST_TIMEOUT_MS,
+        );
         data.push(...response.data);
         if (response.data.length < perPage) break;
       }

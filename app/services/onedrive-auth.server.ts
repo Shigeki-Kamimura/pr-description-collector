@@ -18,7 +18,18 @@ const AUTH_BASE_URL = "https://login.microsoftonline.com";
 const DEFAULT_TENANT = "common";
 // OAuthスコープ
 const SCOPES = ["offline_access", "Files.ReadWrite", "User.Read"];
-const OAUTH_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_OAUTH_REQUEST_TIMEOUT_SECONDS = 180;
+
+function parseTimeoutMs(value: string | undefined, fallback: number): number {
+  const parsedSeconds = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) return fallback;
+  return parsedSeconds * 1000;
+}
+
+const OAUTH_REQUEST_TIMEOUT_MS = parseTimeoutMs(
+  process.env.ONEDRIVE_OAUTH_REQUEST_TIMEOUT_MS,
+  DEFAULT_OAUTH_REQUEST_TIMEOUT_SECONDS * 1000,
+);
 
 // OAuthトークンレスポンス
 type TokenResponse = {
