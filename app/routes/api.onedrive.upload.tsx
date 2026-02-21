@@ -565,7 +565,14 @@ function getEvidenceImageMaxBytes(): number {
 function isImageContentType(contentType: string | null): boolean {
   if (!contentType) return false;
   const mime = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  return mime.startsWith("image/");
+  return (
+    mime === "image/jpeg" ||
+    mime === "image/jpg" ||
+    mime === "image/png" ||
+    mime === "image/gif" ||
+    mime === "image/webp" ||
+    mime === "image/avif"
+  );
 }
 // 画像の拡張子を推測するための簡易マッピング。Content-Type が image/jpeg の場合は .jpg とするなど、一般的なケースをカバーする。
 async function resolveEvidenceFileName({
