@@ -28,13 +28,20 @@ const GITHUB_REQUEST_TIMEOUT_MS = parseTimeoutSecondsToMs(
   DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS * 1000,
 );
 
-function withRequestTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+// GitHub APIリクエストにタイムアウトを設定するユーティリティ関数
+function withRequestTimeout<T>(
+  buildPromise: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    // AbortControllerを使ってリクエストにタイムアウトを設定する。
+    const controller = new AbortController();
     const timeoutId = setTimeout(() => {
+      controller.abort();
       reject(new Error(`GitHub API request timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    promise.then(
+    buildPromise(controller.signal).then(
       (value) => {
         clearTimeout(timeoutId);
         resolve(value);
@@ -171,11 +178,13 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
   // Octokit生成手段（PAT/GitHub Appなど）を差し替え可能にするための薄いラッパー。
   const getPullRequest = async (ref: PullRequestRef): Promise<PullRequest> => {
     const { data } = await withRequestTimeout(
-      octokit.rest.pulls.get({
-        owner: ref.repo.owner,
-        repo: ref.repo.name,
-        pull_number: ref.number,
-      }),
+      (signal) =>
+        octokit.rest.pulls.get({
+          owner: ref.repo.owner,
+          repo: ref.repo.name,
+          pull_number: ref.number,
+          request: { signal },
+        }),
       GITHUB_REQUEST_TIMEOUT_MS,
     );
     // Octokitの型をアプリ内型に変換して返す
@@ -204,13 +213,15 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
       // GitHub APIは1回のリクエストで最大100件までしか取得できないため、ページネーションを処理する。
       for (let page = 1; ; page += 1) {
         const response = await withRequestTimeout(
-          octokit.rest.pulls.listReviews({
-            owner: ref.repo.owner,
-            repo: ref.repo.name,
-            pull_number: ref.number,
-            per_page: perPage,
-            page,
-          }),
+          (signal) =>
+            octokit.rest.pulls.listReviews({
+              owner: ref.repo.owner,
+              repo: ref.repo.name,
+              pull_number: ref.number,
+              per_page: perPage,
+              page,
+              request: { signal },
+            }),
           GITHUB_REQUEST_TIMEOUT_MS,
         );
         data.push(...response.data);

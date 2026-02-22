@@ -81,15 +81,23 @@ describe("github service pagination", () => {
     const { createGitHubService } = await import("./github.server");
     const service = createGitHubService({ token: "token" });
     const octokit = octokitInstances[0];
-    octokit.rest.pulls.get.mockReturnValue(new Promise(() => {}) as never);
+    let capturedSignal: AbortSignal | null = null;
+    octokit.rest.pulls.get.mockImplementation((options: { request?: { signal?: AbortSignal } }) => {
+      capturedSignal = options.request?.signal ?? null;
+      return new Promise(() => {}) as never;
+    });
 
     const requestPromise = service.getPullRequest({
       repo: { owner: "octocat", name: "hello-world" },
       number: 123,
     });
 
+    expect(capturedSignal).not.toBeNull();
+    if (!capturedSignal) throw new Error("AbortSignal was not passed to Octokit request");
+    expect((capturedSignal as { aborted: boolean }).aborted).toBe(false);
     const assertion = expect(requestPromise).rejects.toThrow(/timed out after \d+ms/);
     await vi.advanceTimersByTimeAsync(180_000);
+    expect((capturedSignal as { aborted: boolean }).aborted).toBe(true);
     await assertion;
   });
 
