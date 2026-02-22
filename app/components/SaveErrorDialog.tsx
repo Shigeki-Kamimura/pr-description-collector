@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
 export function formatPartialWriteErrorMessage(error: string): string | null {
   if (!error.includes("partial-write:")) return null;
   // セキュリティ上の理由で、内部処理状態や詳細理由はUIに表示しない。
-  return "保存中にエラーが発生したため、画像保存を取り消しました。再認証または時間をおいて再実行してください。";
+  return "保存中にエラーが発生しました。一部のファイルが保存されたまま残っている可能性があります。再実行する前に OneDrive 上の保存先フォルダーを確認し、重複や不要なファイルを整理してください。解決しない場合は、再認証または時間をおいて再実行してください。";
 }
 
 // 保存エラーダイアログのプロパティ
