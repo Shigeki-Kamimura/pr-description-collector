@@ -26,8 +26,9 @@
 ## 使い方ルール
 - `CHK-xx` は PR 全体で連番にする（Scope をまたいでも番号を振り直さない）
 - `Result` は「確認した事実」を1文で書く
-- `Evidence` は画像URL、PRコメントURL、ファイル名のいずれかを必ず入れる
-- 非該当は `Evidence: N/A` ではなく、`Result` に `N/A: 理由` を書く
+- `Evidence` は画像URL、PRコメントURL、ファイル名を基本とし、未達/非スコープは `N/A` を使う
+- 未達は `Result` に未達理由や次タスクを記載し、`Evidence: N/A` にする
+- Out of Scope は `Result: 非スコープ`、`Evidence: N/A` にする
 
 ## 人間レビュー対応（最後に追記）
 - 人間レビュー（スタッフ/シニア/レビュアー）完了後、以下のセクションをチェックリストの末尾へ追記する
@@ -42,6 +43,3 @@
   Evidence:
 
 ### Scope: Out of Scope（Human Review）
-- [ ] PR本文中画像の取得・`evidence-img/` 保存は未実装である
-  Result: 本PRで未対応であることを明記し、追跡Issueと紐づける
-  Evidence:

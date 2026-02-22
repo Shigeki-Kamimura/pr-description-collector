@@ -2,11 +2,11 @@
  * OneDrive OAuth callback ルートのテスト
  *
  * このファイルを用意した理由:
- * - OAuth失敗時に内部エラー詳細をクライアントへ露出しないという要件を
+ * - OAuth失敗時にトップへ戻し、内部エラー詳細をクライアントへ露出しない契約を
  *   ルート単位でロックするため。
  *
  * このファイルが使われる場面:
- * - `npm run test` 実行時に、callbackのエラーレスポンスが定型文へサニタイズされることを確認するとき。
+ * - `npm run test` 実行時に、callback失敗時のリダイレクト契約を確認するとき。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./auth.onedrive.callback";
@@ -47,21 +47,17 @@ describe("auth.onedrive.callback loader", () => {
     expect(body).toContain("Secure Cookie is unavailable on HTTP");
   });
 
-  it("OAuth provider errorの詳細をレスポンスへ露出しない", async () => {
+  it("OAuth provider error時はトップへリダイレクトする", async () => {
     const request = new Request(
       "https://localhost:5173/auth/onedrive/callback?error=access_denied&error_description=sensitive-details&error_codes=12345",
     );
 
     const response = await loader({ request });
-    const body = await response.text();
-
-    expect(response.status).toBe(400);
-    expect(body).toContain("OneDrive 認証に失敗しました。Connect OneDrive から再試行してください。");
-    expect(body).toContain("[codes: 12345]");
-    expect(body).not.toContain("sensitive-details");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/?onedrive=oauth_failed");
   });
 
-  it("token交換失敗時に内部詳細をレスポンスへ露出しない", async () => {
+  it("token交換失敗時はトップへリダイレクトする", async () => {
     vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("bind-a.nonce-1");
     vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("bind-a");
     vi.mocked(exchangeCodeForToken).mockRejectedValue(new Error("sensitive-token-error"));
@@ -72,14 +68,11 @@ describe("auth.onedrive.callback loader", () => {
     );
 
     const response = await loader({ request });
-    const body = await response.text();
-
-    expect(response.status).toBe(500);
-    expect(body).toBe("OneDrive 認証に失敗しました。Connect OneDrive から再試行してください。");
-    expect(body).not.toContain("sensitive-token-error");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/?onedrive=oauth_failed");
   });
 
-  it("stateとbind cookieの整合が取れない場合は400で拒否する", async () => {
+  it("stateとbind cookieの整合が取れない場合はトップへ戻す", async () => {
     vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("bind-a.nonce-1");
     vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("bind-b");
 
@@ -89,13 +82,11 @@ describe("auth.onedrive.callback loader", () => {
     );
 
     const response = await loader({ request });
-    const body = await response.text();
-
-    expect(response.status).toBe(400);
-    expect(body).toBe("Invalid OAuth state or code.");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/?onedrive=oauth_failed");
   });
 
-  it("state に区切りドットがない場合は400で拒否する", async () => {
+  it("state に区切りドットがない場合もトップへ戻す", async () => {
     vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("bind-a");
     vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("bind-a");
 
@@ -105,10 +96,8 @@ describe("auth.onedrive.callback loader", () => {
     );
 
     const response = await loader({ request });
-    const body = await response.text();
-
-    expect(response.status).toBe(400);
-    expect(body).toBe("Invalid OAuth state or code.");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/?onedrive=oauth_failed");
     expect(exchangeCodeForToken).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,45 @@
 import { Octokit } from "octokit";
 import { createAppAuth } from "@octokit/auth-app";
 
+const DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS = 180;
+// 環境変数から秒単位のタイムアウトをミリ秒に変換して取得するユーティリティ関数
+function parseTimeoutSecondsToMs(value: string | undefined, fallbackMs: number): number {
+  const parsedSeconds = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) return fallbackMs;
+  return parsedSeconds * 1000;
+}
+
+const GITHUB_REQUEST_TIMEOUT_MS = parseTimeoutSecondsToMs(
+  process.env.GITHUB_REQUEST_TIMEOUT_SECONDS,
+  DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS * 1000,
+);
+
+// GitHub APIリクエストにタイムアウトを設定するユーティリティ関数
+function withRequestTimeout<T>(
+  buildPromise: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    // AbortControllerを使ってリクエストにタイムアウトを設定する。
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`GitHub API request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    buildPromise(controller.signal).then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
+
 export type GitHubAuth = {
   /** GitHub Personal Access Token または GITHUB_TOKEN */
   token: string;
@@ -138,11 +177,16 @@ export async function createGitHubServiceFromEnv(): Promise<GitHubService> {
 function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
   // Octokit生成手段（PAT/GitHub Appなど）を差し替え可能にするための薄いラッパー。
   const getPullRequest = async (ref: PullRequestRef): Promise<PullRequest> => {
-    const { data } = await octokit.rest.pulls.get({
-      owner: ref.repo.owner,
-      repo: ref.repo.name,
-      pull_number: ref.number,
-    });
+    const { data } = await withRequestTimeout(
+      (signal) =>
+        octokit.rest.pulls.get({
+          owner: ref.repo.owner,
+          repo: ref.repo.name,
+          pull_number: ref.number,
+          request: { signal },
+        }),
+      GITHUB_REQUEST_TIMEOUT_MS,
+    );
     // Octokitの型をアプリ内型に変換して返す
     return {
       id: String(data.id),
@@ -168,13 +212,18 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
       const data = [];
       // GitHub APIは1回のリクエストで最大100件までしか取得できないため、ページネーションを処理する。
       for (let page = 1; ; page += 1) {
-        const response = await octokit.rest.pulls.listReviews({
-          owner: ref.repo.owner,
-          repo: ref.repo.name,
-          pull_number: ref.number,
-          per_page: perPage,
-          page,
-        });
+        const response = await withRequestTimeout(
+          (signal) =>
+            octokit.rest.pulls.listReviews({
+              owner: ref.repo.owner,
+              repo: ref.repo.name,
+              pull_number: ref.number,
+              per_page: perPage,
+              page,
+              request: { signal },
+            }),
+          GITHUB_REQUEST_TIMEOUT_MS,
+        );
         data.push(...response.data);
         if (response.data.length < perPage) break;
       }

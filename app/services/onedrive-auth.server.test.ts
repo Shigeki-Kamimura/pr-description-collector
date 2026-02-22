@@ -86,7 +86,7 @@ describe("onedrive-auth refresh single-flight", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(getAccessToken(request)).rejects.toThrow("timed out after 30000ms");
+    await expect(getAccessToken(request)).rejects.toThrow(/timed out after \d+ms/);
     const token = await getAccessToken(request);
 
     expect(token).toBe("new-access-token-after-timeout");

@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useFetcher, useLoaderData, useSearchParams } from "react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import { parseChecklist, summarize, type Checklist } from "../services/checklist";
@@ -15,6 +15,7 @@ import { ensureCsrfToken, verifyCsrfToken } from "../services/csrf.server";
 
 import { OneDriveAuthDialog } from "../components/OneDriveAuthDialog";
 import { SaveErrorDialog } from "../components/SaveErrorDialog";
+import { SavingDialog } from "../components/SavingDialog";
 import { SuccessDialog } from "../components/SuccessDialog";
 
 /**
@@ -36,6 +37,16 @@ type ActionData =
   | { ok: true; description: string; result: Checklist }
   | { ok: false; error: string };
 type LoaderData = { csrfToken: string };
+
+const FETCHER_TRANSPORT_ERROR_KEY = "fetcher-transport-error";
+const FETCHER_TRANSPORT_ERROR_MESSAGE =
+  "サーバーエラーが発生しました。トップページに戻りました。しばらくしてから再実行してください。";
+const OAUTH_CALLBACK_ERROR_MESSAGE =
+  "OneDrive 認証に失敗しました。Connect OneDrive から再試行してください。";
+
+function isFetcherApiResponse(value: unknown): value is { ok: boolean } {
+  return typeof value === "object" && value !== null && typeof (value as { ok?: unknown }).ok === "boolean";
+}
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { token, setCookie } = await ensureCsrfToken(request);
@@ -195,10 +206,30 @@ export default function Index() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const onedriveConnected = searchParams.get("onedrive") === "connected";
+  const onedriveOAuthFailed = searchParams.get("onedrive") === "oauth_failed";
   const [isCheckingOneDriveSession, setIsCheckingOneDriveSession] = useState(false);
   const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false);
   const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false);
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
+  const [transportError, setTransportError] = useState<string | null>(null);
+  const collectRequestStartedRef = useRef(false);
+  const uploadRequestStartedRef = useRef(false);
+  const sessionStatusRequestStartedRef = useRef(false);
+
+  const redirectToTopOnTransportError = () => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(FETCHER_TRANSPORT_ERROR_KEY, FETCHER_TRANSPORT_ERROR_MESSAGE);
+    window.location.assign("/");
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const persistedError = window.sessionStorage.getItem(FETCHER_TRANSPORT_ERROR_KEY);
+    if (!persistedError) return;
+    setTransportError(persistedError);
+    window.sessionStorage.removeItem(FETCHER_TRANSPORT_ERROR_KEY);
+  }, []);
+
   const effectiveError = (uploadError && uploadError !== INVALID_PR_REF_ERROR ? uploadError : null) ?? sessionStatusError;
   const isAuthError =
     (uploadFetcher.data && !uploadFetcher.data.ok && uploadFetcher.data.isAuthError) ||
@@ -207,9 +238,14 @@ export default function Index() {
       sessionStatusFetcher.data.isAuthError) ||
     false;
 
+  // 画面上のエラー表示は、APIからのエラーと通信エラーで分ける。
   useEffect(() => {
     if (effectiveError) setIsErrorDialogOpen(true);
   }, [effectiveError]);
+  // APIからのエラーは画面上の注釈で表示するため、APIエラーがある場合はエラー表示用ダイアログは開かないようにする。
+  useEffect(() => {
+    if (transportError) setIsErrorDialogOpen(true);
+  }, [transportError]);
 
   useEffect(() => {
     if (collectError) {
@@ -232,6 +268,42 @@ export default function Index() {
   }, [uploadFetcher.data]);
 
   useEffect(() => {
+    if (collectFetcher.state !== "idle") {
+      collectRequestStartedRef.current = true;
+      return;
+    }
+    if (!collectRequestStartedRef.current) return;
+    collectRequestStartedRef.current = false;
+    if (!isFetcherApiResponse(collectFetcher.data)) {
+      redirectToTopOnTransportError();
+    }
+  }, [collectFetcher.state, collectFetcher.data]);
+
+  useEffect(() => {
+    if (uploadFetcher.state !== "idle") {
+      uploadRequestStartedRef.current = true;
+      return;
+    }
+    if (!uploadRequestStartedRef.current) return;
+    uploadRequestStartedRef.current = false;
+    if (!isFetcherApiResponse(uploadFetcher.data)) {
+      redirectToTopOnTransportError();
+    }
+  }, [uploadFetcher.state, uploadFetcher.data]);
+
+  useEffect(() => {
+    if (sessionStatusFetcher.state !== "idle") {
+      sessionStatusRequestStartedRef.current = true;
+      return;
+    }
+    if (!sessionStatusRequestStartedRef.current) return;
+    sessionStatusRequestStartedRef.current = false;
+    if (!isFetcherApiResponse(sessionStatusFetcher.data)) {
+      redirectToTopOnTransportError();
+    }
+  }, [sessionStatusFetcher.state, sessionStatusFetcher.data]);
+
+  useEffect(() => {
     if (collectFetcher.state !== "idle") return;
     if (collectFetcher.data?.ok && pendingCollectRef) {
       setLastCollectedRef(pendingCollectRef);
@@ -249,6 +321,14 @@ export default function Index() {
     next.delete("onedrive");
     setSearchParams(next, { replace: true });
   }, [onedriveConnected, searchParams, setSearchParams, sessionStatusFetcher]);
+
+  useEffect(() => {
+    if (!onedriveOAuthFailed) return;
+    setTransportError(OAUTH_CALLBACK_ERROR_MESSAGE);
+    const next = new URLSearchParams(searchParams);
+    next.delete("onedrive");
+    setSearchParams(next, { replace: true });
+  }, [onedriveOAuthFailed, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (isCheckingOneDriveSession && sessionStatusFetcher.data?.ok) {
@@ -287,7 +367,7 @@ export default function Index() {
         <h2>Fetch from GitHub</h2>
         <div className="annotation-wrapper" aria-live="polite">
           {!collectFetcher.data?.ok ? (
-            <p className="annotation-text">Get Description を押してから保存してください。</p>
+            <p className="annotation-text">Get Description は取得のみです。保存（画像含む）は Save to OneDrive で実行します。</p>
           ) : null}
           {showPrRefAnnotation ? (
             <p className="annotation-text-small">
@@ -366,7 +446,7 @@ export default function Index() {
                 !prRefValidation.ok
               }
             >
-              Get Description
+              Get Description (Fetch Only)
             </button>
             <a className="btn connect-one-drive-btn" href="/auth/onedrive/login">
               Connect OneDrive
@@ -394,7 +474,7 @@ export default function Index() {
                 !isSaveTargetInSync
               }
             >
-              Save to OneDrive
+              Save to OneDrive (with images)
             </button>
 
             <Form method="post" className="form">
@@ -485,15 +565,22 @@ export default function Index() {
         open={isAuthDialogOpen}
         onClose={() => setIsAuthDialogOpen(false)}
       />
+      <SavingDialog
+        open={uploadFetcher.state !== "idle"}
+      />
       <SaveErrorDialog
         open={isErrorDialogOpen}
-        onClose={() => setIsErrorDialogOpen(false)}
-        error={effectiveError ?? ""}
+        onClose={() => {
+          setIsErrorDialogOpen(false);
+          setTransportError(null);
+        }}
+        error={transportError ?? effectiveError ?? ""}
         isAuthError={isAuthError}
       />
       <SuccessDialog
         open={isSuccessDialogOpen}
         onClose={() => setIsSuccessDialogOpen(false)}
+        evidenceImages={uploadFetcher.data?.ok ? uploadFetcher.data.evidenceImages : null}
       />
     </main>
   );

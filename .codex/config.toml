@@ -1,0 +1,42 @@
+
+################################################################################
+# repo-root/.codex/config.toml
+#
+# Project-scoped configuration.
+# Loaded only when you trust the project. (Config layering: see Config basics)
+################################################################################
+# NOTE: Profiles are experimental and NOT supported in the Codex IDE extension.
+# Use them from the CLI with: codex --profile <name>
+################################################################################
+
+# Keep defaults stable for IDE + browser usage.
+model = "gpt-5.2-codex"
+personality = "pragmatic"
+approval_policy = "on-request"
+model_reasoning_effort = "medium"
+
+# Optional: for CLI /review. Uses current session model unless overridden.
+# Set a stronger model if you want heavier review runs.
+# review_model = "gpt-5.2-codex"
+
+################################################################################
+# Profiles (CLI only)
+################################################################################
+
+[profiles.hq_coder]
+model = "gpt-5.2-codex"
+personality = "pragmatic"
+model_reasoning_effort = "medium"
+approval_policy = "on-request"
+
+[profiles.req_pl]
+model = "gpt-5.2-codex"
+personality = "pragmatic"
+model_reasoning_effort = "medium"
+approval_policy = "on-request"
+
+[profiles.test_qa]
+model = "gpt-5.2-codex"
+personality = "pragmatic"
+model_reasoning_effort = "high"
+approval_policy = "on-request"

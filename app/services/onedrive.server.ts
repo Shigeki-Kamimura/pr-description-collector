@@ -38,8 +38,16 @@ export type OneDriveDriveInfo = {
 export interface OneDriveService {
   /** 指定パスにテキストを保存（存在しなければ作成、あれば上書き） */
   saveText(path: string, content: string): Promise<DriveItem>;
+  /**
+   * 指定パスにバイナリを保存
+   * - 存在しなければ作成
+   * - 既存ファイルがある場合は 412 Precondition Failed となり上書きしない
+   */
+  saveBinary(path: string, content: Uint8Array, contentType?: string): Promise<DriveItem>;
   /** テキストを取得 */
   getText(path: string): Promise<string>;
+  /** 指定パスのアイテム情報を取得（未存在時は null） */
+  getItem(path: string): Promise<DriveItem | null>;
   /** 指定パスのファイル/フォルダを削除 */
   deleteItem(path: string): Promise<void>;
   /** 現在のユーザー情報を取得 */
@@ -331,10 +339,36 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
           headers: {
             "Content-Type": "text/plain; charset=utf-8",
           },
-          body: content,
+          body: content as unknown as BodyInit,
         },
       );
 
+      return toDriveItem(item);
+    },
+    // バイナリ保存ユーティリティ
+    async saveBinary(path: string, content: Uint8Array, contentType?: string): Promise<DriveItem> {
+      const normalized = normalizeDrivePath(path);
+      if (!normalized) throw new Error("OneDrive saveBinary: path is empty");
+
+      const parts = normalized.split("/");
+      const folderPath = parts.slice(0, -1).join("/");
+      if (folderPath) {
+        await ensureFolderPath(auth.accessToken, folderPath);
+      }
+
+      const encoded = encodeDrivePath(normalized);
+      const item = await graphJson<GraphDriveItem>(
+        auth.accessToken,
+        `/me/drive/root:/${encoded}:/content`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": contentType ?? "application/octet-stream",
+            "If-None-Match": "*",
+          },
+          body: content as unknown as BodyInit,
+        },
+      );
       return toDriveItem(item);
     },
     // テキスト取得ユーティリティ
@@ -347,6 +381,21 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
       return await graphText(auth.accessToken, `/me/drive/root:/${encoded}:/content`, {
         method: "GET",
       });
+    },
+    // アイテム情報取得ユーティリティ
+    async getItem(path: string): Promise<DriveItem | null> {
+      const normalized = normalizeDrivePath(path);
+      if (!normalized) throw new Error("OneDrive getItem: path is empty");
+      const encoded = encodeDrivePath(normalized);
+      try {
+        const item = await graphJson<GraphDriveItem>(auth.accessToken, `/me/drive/root:/${encoded}:`, {
+          method: "GET",
+        });
+        return toDriveItem(item);
+      } catch (error) {
+        if (error instanceof OneDriveApiError && error.status === 404) return null;
+        throw error;
+      }
     },
     // アイテム削除ユーティリティ
     async deleteItem(path: string): Promise<void> {
