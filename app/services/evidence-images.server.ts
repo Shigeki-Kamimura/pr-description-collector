@@ -519,6 +519,7 @@ function inferExtFromContentType(contentType: string | null): string {
   const mime = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
   switch (mime) {
     case "image/jpeg":
+    case "image/jpg":
       return ".jpg";
     case "image/png":
       return ".png";
@@ -526,10 +527,8 @@ function inferExtFromContentType(contentType: string | null): string {
       return ".gif";
     case "image/webp":
       return ".webp";
-    case "image/svg+xml":
-      return ".svg";
-    case "image/bmp":
-      return ".bmp";
+    case "image/avif":
+      return ".avif";
     default:
       return "";
   }

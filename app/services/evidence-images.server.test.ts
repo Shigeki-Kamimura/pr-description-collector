@@ -271,4 +271,12 @@ describe("buildImageBaseName", () => {
   it("URL末尾が拡張子なしのとき content-type から補完する", () => {
     expect(buildImageBaseName("https://example.com/path/evidence", "image/jpeg")).toBe("evidence.jpg");
   });
+
+  it("AVIF は拡張子を補完する", () => {
+    expect(buildImageBaseName("https://example.com/path/evidence", "image/avif")).toBe("evidence.avif");
+  });
+
+  it("SVG は保存対象外のため拡張子を補完しない", () => {
+    expect(buildImageBaseName("https://example.com/path/evidence", "image/svg+xml")).toBe("evidence");
+  });
 });
