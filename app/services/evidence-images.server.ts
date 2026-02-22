@@ -236,7 +236,12 @@ export async function downloadImageWithRetry(
         // リトライ可能で、かつまだリトライ回数が残っている場合は待機してから再試行する。そうでない場合は失敗として返す。
         if (retryable && attempt < maxAttempts) {
           lastReason = reason;
-          await waitBeforeRetry(attempt, response.headers.get("retry-after"));
+          // サーバーからの Retry-After ヘッダーや、リトライ回数に応じた指数バックオフを考慮して待機する。
+          await waitBeforeRetry({
+            attempt,
+            timeoutMs,
+            retryAfter: response.headers.get("retry-after"),
+          });
           continue;
         }
         return { ok: false, errorReason: reason };
@@ -258,7 +263,7 @@ export async function downloadImageWithRetry(
       if (error instanceof DOMException && error.name === "AbortError") {
         lastReason = "TIMEOUT";
         if (attempt < maxAttempts) {
-          await waitBeforeRetry(attempt);
+          await waitBeforeRetry({ attempt, timeoutMs });
           continue;
         }
         return { ok: false, errorReason: "TIMEOUT" };
@@ -266,7 +271,7 @@ export async function downloadImageWithRetry(
       if (error instanceof TypeError) {
         lastReason = "NETWORK_ERROR";
         if (attempt < maxAttempts) {
-          await waitBeforeRetry(attempt);
+          await waitBeforeRetry({ attempt, timeoutMs });
           continue;
         }
         return { ok: false, errorReason: "NETWORK_ERROR" };
@@ -281,10 +286,19 @@ export async function downloadImageWithRetry(
 }
 
 // リトライの待機時間を計算して待機する。リトライ回数に応じた指数バックオフと、サーバーからの Retry-After ヘッダーの両方を考慮する。
-async function waitBeforeRetry(attempt: number, retryAfter: string | null = null): Promise<void> {
+async function waitBeforeRetry({
+  attempt,
+  timeoutMs,
+  retryAfter = null,
+}: {
+  attempt: number;
+  timeoutMs: number;
+  retryAfter?: string | null;
+}): Promise<void> {
   const retryAfterMs = parseRetryAfterMs(retryAfter);
   const backoffMs = Math.min(RETRY_BACKOFF_BASE_MS * attempt, RETRY_BACKOFF_MAX_MS);
-  const delayMs = retryAfterMs ?? backoffMs;
+  const retryDelayMs = retryAfterMs ?? backoffMs;
+  const delayMs = Math.max(1, Math.min(retryDelayMs, RETRY_BACKOFF_MAX_MS, timeoutMs));
   await new Promise<void>((resolve) => {
     setTimeout(resolve, delayMs);
   });

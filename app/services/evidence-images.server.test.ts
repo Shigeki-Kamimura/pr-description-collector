@@ -78,6 +78,44 @@ describe("downloadImageWithRetry", () => {
     }
   });
 
+  it("Retry-After が極端に大きくても timeoutMs 上限で再試行する", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchFn = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          new Response("busy", {
+            status: 429,
+            headers: { "retry-after": "86400" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(new Uint8Array([1]), {
+            status: 200,
+            headers: { "content-type": "image/png" },
+          }),
+        );
+      const resultPromise = downloadImageWithRetry("https://github.com/user-attachments/assets/retry.png", {
+        timeoutMs: 2_000,
+        maxAttempts: 2,
+        fetchFn,
+      });
+
+      await Promise.resolve();
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await resultPromise;
+      expect("ok" in result).toBe(false);
+      if ("ok" in result) return;
+      expect(result.bytes.byteLength).toBe(1);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("タイムアウト時は TIMEOUT を返す", async () => {
     const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
       await new Promise((_resolve, reject) => {
