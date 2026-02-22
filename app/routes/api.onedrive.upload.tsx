@@ -65,6 +65,9 @@ type EvidenceImageRecord = {
 const DEFAULT_EVIDENCE_IMAGE_MAX_KB = 10 * 1024;
 const BYTES_PER_KILOBYTE = 1024;
 const DEFAULT_EVIDENCE_IMAGE_MAX_COUNT = 20;
+const MAX_CONSECUTIVE_ONEDRIVE_SAVE_FAILURES = 2;
+const ONEDRIVE_SAVE_FAILED_REASON = "ONEDRIVE_SAVE_FAILED";
+const ONEDRIVE_SAVE_SKIPPED_REASON = "ONEDRIVE_SAVE_SKIPPED_AFTER_CONSECUTIVE_FAILURE";
 
 /*
 / 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
@@ -473,6 +476,7 @@ async function saveEvidenceImages({
   const results: EvidenceImageRecord[] = [];
   const maxImageBytes = getEvidenceImageMaxBytes();
   const maxImageCount = getEvidenceImageMaxCount();
+  let consecutiveOneDriveSaveFailures = 0;
 
   for (const [index, sourceUrl] of urls.entries()) {
     if (index >= maxImageCount) {
@@ -482,6 +486,16 @@ async function saveEvidenceImages({
         fileName: null,
         onedrivePath: null,
         errorReason: "IMAGE_LIMIT_EXCEEDED",
+      });
+      continue;
+    }
+    if (consecutiveOneDriveSaveFailures >= MAX_CONSECUTIVE_ONEDRIVE_SAVE_FAILURES) {
+      results.push({
+        sourceUrl,
+        status: "failed",
+        fileName: null,
+        onedrivePath: null,
+        errorReason: ONEDRIVE_SAVE_SKIPPED_REASON,
       });
       continue;
     }
@@ -530,6 +544,7 @@ async function saveEvidenceImages({
         onedrivePath,
         errorReason: null,
       });
+      consecutiveOneDriveSaveFailures = 0;
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : String(error);
       // OneDrive への保存に失敗した場合、認証エラーっぽいかどうかに関わらず、まずはエラーメッセージを解析してみる。
@@ -540,7 +555,19 @@ async function saveEvidenceImages({
           .map((record) => record.onedrivePath as string);
         throw new EvidenceImagesSaveError(rawMessage, savedPaths);
       }
+      if (isOneDriveApiError(rawMessage)) {
+        consecutiveOneDriveSaveFailures += 1;
+        results.push({
+          sourceUrl,
+          status: "failed",
+          fileName: null,
+          onedrivePath: null,
+          errorReason: ONEDRIVE_SAVE_FAILED_REASON,
+        });
+        continue;
+      }
       const parsed = extractOneDriveError(rawMessage);
+      consecutiveOneDriveSaveFailures = 0;
       results.push({
         sourceUrl,
         status: "failed",
@@ -553,6 +580,10 @@ async function saveEvidenceImages({
     }
   }
   return results;
+}
+
+function isOneDriveApiError(rawMessage: string): boolean {
+  return rawMessage.toLowerCase().includes("onedrive api error");
 }
 
 function getEvidenceImageMaxBytes(): number {
