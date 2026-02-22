@@ -373,7 +373,14 @@ function getContentLength(value: string | null): number | null {
 
 async function readResponseBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
   const body = response.body;
-  if (!body) return new Uint8Array(await response.arrayBuffer());
+  // bodyがnullの場合は、Responseオブジェクトがすでに完全に読み込まれているとみなし、arrayBufferから直接読み取る。
+  if (!body) {
+    const data = new Uint8Array(await response.arrayBuffer());
+    if (data.byteLength > maxBytes) {
+      throw new Error("PAYLOAD_TOO_LARGE");
+    }
+    return data;
+  }
 
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];

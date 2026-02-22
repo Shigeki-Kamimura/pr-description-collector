@@ -255,6 +255,22 @@ describe("downloadImageWithRetry", () => {
     expect(result).toEqual({ ok: false, errorReason: "PAYLOAD_TOO_LARGE" });
   });
 
+  it("response.body が null でも実バイト上限を超えたら失敗する", async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "image/png" }),
+      body: null,
+      arrayBuffer: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3, 4, 5]).buffer),
+    } as unknown as Response);
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/null-body.png", {
+      maxBytes: 4,
+      maxAttempts: 1,
+      fetchFn,
+    });
+    expect(result).toEqual({ ok: false, errorReason: "PAYLOAD_TOO_LARGE" });
+  });
+
   it("サイズが上限以下なら成功する", async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(new Uint8Array([1, 2, 3, 4]), {
