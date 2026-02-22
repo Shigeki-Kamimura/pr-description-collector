@@ -360,6 +360,7 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
           method: "PUT",
           headers: {
             "Content-Type": contentType ?? "application/octet-stream",
+            "If-None-Match": "*",
           },
           body: content as unknown as BodyInit,
         },

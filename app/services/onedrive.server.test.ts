@@ -93,6 +93,9 @@ describe("onedrive service error handling", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const saveCall = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(saveCall[0]).toContain("/content");
-    expect(saveCall[1].headers).toMatchObject({ "Content-Type": "image/png" });
+    expect(saveCall[1].headers).toMatchObject({
+      "Content-Type": "image/png",
+      "If-None-Match": "*",
+    });
   });
 });
