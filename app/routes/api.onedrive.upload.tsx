@@ -67,6 +67,7 @@ const BYTES_PER_KILOBYTE = 1024;
 const DEFAULT_EVIDENCE_IMAGE_MAX_COUNT = 20; // 画像の枚数が多すぎると保存処理が重くなったり、OneDrive の容量を圧迫したりする可能性があるため、上限を設ける。
 const MAX_ONEDRIVE_SIMPLE_UPLOAD_BYTES = 250 * 1024 * 1024; // Microsoft Graph 単純アップロードの上限
 const MAX_CONSECUTIVE_ONEDRIVE_SAVE_FAILURES = 2;
+const MAX_SAVE_CONFLICT_RETRIES = 20;
 const ONEDRIVE_SAVE_FAILED_REASON = "ONEDRIVE_SAVE_FAILED";
 const ONEDRIVE_SAVE_SKIPPED_REASON = "ONEDRIVE_SAVE_SKIPPED_AFTER_CONSECUTIVE_FAILURE";
 const IMAGE_LIMIT_EXCEEDED_REMAINING_REASON = "IMAGE_LIMIT_EXCEEDED_REMAINING";
@@ -545,14 +546,30 @@ async function saveEvidenceImages({
 
     try {
       const baseName = buildImageBaseName(sourceUrl, downloaded.contentType);
-      const fileName = await resolveEvidenceFileName({
+      let fileName = await resolveEvidenceFileName({
         onedrive,
         folderPath: imagesFolder,
         baseName,
         reservedNames,
       });
-      const onedrivePath = `${imagesFolder}/${fileName}`;
-      await onedrive.saveBinary(onedrivePath, downloaded.bytes, downloaded.contentType ?? undefined);
+      let onedrivePath = `${imagesFolder}/${fileName}`;
+      for (let retry = 0; retry <= MAX_SAVE_CONFLICT_RETRIES; retry += 1) {
+        try {
+          await onedrive.saveBinary(onedrivePath, downloaded.bytes, downloaded.contentType ?? undefined);
+          break;
+        } catch (saveError) {
+          if (
+            saveError instanceof OneDriveApiError &&
+            saveError.status === 412 &&
+            retry < MAX_SAVE_CONFLICT_RETRIES
+          ) {
+            fileName = allocateLocalUniqueName(baseName, reservedNames);
+            onedrivePath = `${imagesFolder}/${fileName}`;
+            continue;
+          }
+          throw saveError;
+        }
+      }
       results.push({
         sourceUrl,
         status: "success",
@@ -650,17 +667,24 @@ async function resolveEvidenceFileName({
   baseName: string;
   reservedNames: Set<string>;
 }): Promise<string> {
-  // 候補ファイル名ごとに OneDrive 上の存在確認を行い、既存ファイルの上書きを防ぐ。
-  for (let index = 0; index < 5000; index += 1) {
-    const candidate = index === 0 ? baseName : buildIndexedFileName(baseName, index);
-    if (reservedNames.has(candidate)) {
-      continue;
-    }
-    const existing = await onedrive.getItem(`${folderPath}/${candidate}`);
-    if (existing) {
-      reservedNames.add(candidate);
-      continue;
-    }
+  // すでに予約済みならローカル採番を使う。同一リクエスト内の衝突を回避する。
+  if (reservedNames.has(baseName)) {
+    return allocateLocalUniqueName(baseName, reservedNames);
+  }
+  // OneDrive 上の存在確認は初回候補のみ。以降の衝突は saveBinary 側の 412 で検知して再採番する。
+  const existing = await onedrive.getItem(`${folderPath}/${baseName}`);
+  if (!existing) {
+    reservedNames.add(baseName);
+    return baseName;
+  }
+  reservedNames.add(baseName);
+  return allocateLocalUniqueName(baseName, reservedNames);
+}
+
+function allocateLocalUniqueName(baseName: string, reservedNames: Set<string>): string {
+  for (let index = 1; index <= 5000; index += 1) {
+    const candidate = buildIndexedFileName(baseName, index);
+    if (reservedNames.has(candidate)) continue;
     reservedNames.add(candidate);
     return candidate;
   }

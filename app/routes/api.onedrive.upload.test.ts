@@ -414,9 +414,7 @@ describe("api.onedrive.upload action", () => {
     vi.mocked(downloadImageWithRetry)
       .mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" })
       .mockResolvedValueOnce({ bytes: new Uint8Array([2]), contentType: "image/png" });
-    onedrive.getItem
-      .mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/existing-image" })
-      .mockResolvedValueOnce({ name: "image-1.png", webUrl: "https://example.com/existing-image-1" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/existing-image" });
     onedrive.saveText
       .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
       .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
@@ -424,33 +422,59 @@ describe("api.onedrive.upload action", () => {
     const response = await action({ request: buildRequest() } as never);
 
     expect(response.status).toBe(200);
-    expect(onedrive.getItem).toHaveBeenCalledTimes(4);
+    expect(onedrive.getItem).toHaveBeenCalledTimes(1);
     expect(onedrive.getItem).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining("/imgs/image.png"),
     );
-    expect(onedrive.getItem).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("/imgs/image-1.png"),
-    );
-    expect(onedrive.getItem).toHaveBeenNthCalledWith(
-      3,
-      expect.stringContaining("/imgs/image-2.png"),
-    );
-    expect(onedrive.getItem).toHaveBeenNthCalledWith(
-      4,
-      expect.stringContaining("/imgs/image-3.png"),
-    );
     expect(onedrive.saveBinary).toHaveBeenCalledTimes(2);
     expect(onedrive.saveBinary).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining("/imgs/image-2.png"),
+      expect.stringContaining("/imgs/image-1.png"),
       expect.any(Uint8Array),
       "image/png",
     );
     expect(onedrive.saveBinary).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining("/imgs/image-3.png"),
+      expect.stringContaining("/imgs/image-2.png"),
+      expect.any(Uint8Array),
+      "image/png",
+    );
+  });
+
+  it("saveBinary で 412 競合が起きた場合は再採番して再試行する", async () => {
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: "![a](https://example.com/a.png)",
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue(["https://example.com/a.png"]);
+    vi.mocked(buildImageBaseName).mockReturnValue("image.png");
+    vi.mocked(downloadImageWithRetry).mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/existing-image" });
+    onedrive.saveBinary
+      .mockRejectedValueOnce(new OneDriveApiError("name conflict", 412, "nameAlreadyExists"))
+      .mockResolvedValueOnce({ name: "image-2.png", webUrl: "https://example.com/image-2.png" });
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+
+    const response = await action({ request: buildRequest() } as never);
+    expect(response.status).toBe(200);
+    expect(onedrive.getItem).toHaveBeenCalledTimes(1);
+    expect(onedrive.saveBinary).toHaveBeenCalledTimes(2);
+    expect(onedrive.saveBinary).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("/imgs/image-1.png"),
+      expect.any(Uint8Array),
+      "image/png",
+    );
+    expect(onedrive.saveBinary).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("/imgs/image-2.png"),
       expect.any(Uint8Array),
       "image/png",
     );
