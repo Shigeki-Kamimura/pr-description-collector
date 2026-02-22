@@ -256,6 +256,7 @@ export async function downloadImageWithRetry(
       }
       const contentLength = getContentLength(response.headers.get("content-length"));
       if (contentLength !== null && contentLength > maxBytes) {
+        await cancelResponseBodySafely(response);
         return { ok: false, errorReason: "PAYLOAD_TOO_LARGE" };
       }
       const contentType = response.headers.get("content-type");

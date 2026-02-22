@@ -269,8 +269,14 @@ describe("downloadImageWithRetry", () => {
   });
 
   it("Content-Length が上限超過なら即時に失敗する", async () => {
+    const tooLargeBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+      },
+    });
+    const cancelSpy = vi.spyOn(tooLargeBody, "cancel");
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(new Uint8Array([1]), {
+      new Response(tooLargeBody, {
         status: 200,
         headers: {
           "content-type": "image/png",
@@ -284,6 +290,7 @@ describe("downloadImageWithRetry", () => {
       fetchFn,
     });
     expect(result).toEqual({ ok: false, errorReason: "PAYLOAD_TOO_LARGE" });
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
   });
 
   it("Content-Length 未設定でも実バイトが上限超過なら失敗する", async () => {

@@ -38,7 +38,11 @@ export type OneDriveDriveInfo = {
 export interface OneDriveService {
   /** 指定パスにテキストを保存（存在しなければ作成、あれば上書き） */
   saveText(path: string, content: string): Promise<DriveItem>;
-  /** 指定パスにバイナリを保存（存在しなければ作成、あれば上書き） */
+  /**
+   * 指定パスにバイナリを保存
+   * - 存在しなければ作成
+   * - 既存ファイルがある場合は 412 Precondition Failed となり上書きしない
+   */
   saveBinary(path: string, content: Uint8Array, contentType?: string): Promise<DriveItem>;
   /** テキストを取得 */
   getText(path: string): Promise<string>;
