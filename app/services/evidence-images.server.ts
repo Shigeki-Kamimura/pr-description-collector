@@ -201,7 +201,7 @@ function isLikelyImageUrl(rawUrl: string): boolean {
 }
 // EvidenceDownloadFailure の errorReason 値の例:
 // - "INVALID_URL": URLとして不正な文字列だった場合。
-// - "UNSUPPORTED_PROTOCOL": http: または https: 以外のスキームだった場合。
+// - "UNSUPPORTED_PROTOCOL": https: 以外のスキームだった場合。
 // - "BLOCKED_PRIVATE_HOST": localhost やプライベートIPアドレスなど、アクセスがブロックされるホストだった場合。
 // - "BLOCKED_UNTRUSTED_HOST": 許可ドメイン以外のホストだった場合。
 // - "TIMEOUT": ダウンロードがタイムアウトした場合。abortController を使用して fetch を中断した結果。
@@ -413,7 +413,7 @@ function getBlockedHostReason(rawUrl: string): string | null {
     return "INVALID_URL";
   }
 
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+  if (parsed.protocol !== "https:") {
     return "UNSUPPORTED_PROTOCOL";
   }
 

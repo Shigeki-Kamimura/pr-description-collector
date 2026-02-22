@@ -637,35 +637,26 @@ async function resolveEvidenceFileName({
   baseName: string;
   reservedNames: Set<string>;
 }): Promise<string> {
-  // すでに予約されているファイル名の場合は、ローカルで一意なファイル名を生成して返す。同一リクエストでのファイル名衝突を回避する。
-  if (reservedNames.has(baseName)) {
-    return allocateLocalUniqueName(baseName, reservedNames);
-  }
-
-  const basePath = `${folderPath}/${baseName}`;
-  const existing = await onedrive.getItem(basePath);
-  if (!existing) {
-    reservedNames.add(baseName);
-    return baseName;
-  }
-
-  reservedNames.add(baseName);
-  return allocateLocalUniqueName(baseName, reservedNames);
-}
-
-// ローカルで一意なファイル名を生成する。baseName の末尾に -1, -2, ... のようにインデックスを付与していき、reservedNames に存在しないファイル名が見つかるまで繰り返す。
-// インデックスは 1 から始めて最大 5000 まで試す。これ以上になると同一リクエスト内でのファイル名衝突が非常に多いと考えられるため、例外を投げる。
-function allocateLocalUniqueName(baseName: string, reservedNames: Set<string>): string {
-  const { stem, ext } = splitFileName(baseName);
-  for (let index = 1; index < 5000; index += 1) {
-    const candidate = `${stem}-${index}${ext}`;
+  // 候補ファイル名ごとに OneDrive 上の存在確認を行い、既存ファイルの上書きを防ぐ。
+  for (let index = 0; index < 5000; index += 1) {
+    const candidate = index === 0 ? baseName : buildIndexedFileName(baseName, index);
     if (reservedNames.has(candidate)) {
+      continue;
+    }
+    const existing = await onedrive.getItem(`${folderPath}/${candidate}`);
+    if (existing) {
+      reservedNames.add(candidate);
       continue;
     }
     reservedNames.add(candidate);
     return candidate;
   }
   throw new Error(`Failed to allocate image filename: ${baseName}`);
+}
+
+function buildIndexedFileName(baseName: string, index: number): string {
+  const { stem, ext } = splitFileName(baseName);
+  return `${stem}-${index}${ext}`;
 }
 
 // ファイル名を拡張子とベース名に分割する。拡張子がない場合は ext を空文字列とする。

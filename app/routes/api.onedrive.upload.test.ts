@@ -369,7 +369,9 @@ describe("api.onedrive.upload action", () => {
     vi.mocked(downloadImageWithRetry)
       .mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" })
       .mockResolvedValueOnce({ bytes: new Uint8Array([2]), contentType: "image/png" });
-    onedrive.getItem.mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/existing-image" });
+    onedrive.getItem
+      .mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/existing-image" })
+      .mockResolvedValueOnce({ name: "image-1.png", webUrl: "https://example.com/existing-image-1" });
     onedrive.saveText
       .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
       .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
@@ -377,17 +379,33 @@ describe("api.onedrive.upload action", () => {
     const response = await action({ request: buildRequest() } as never);
 
     expect(response.status).toBe(200);
-    expect(onedrive.getItem).toHaveBeenCalledTimes(1);
+    expect(onedrive.getItem).toHaveBeenCalledTimes(4);
+    expect(onedrive.getItem).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("/imgs/image.png"),
+    );
+    expect(onedrive.getItem).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("/imgs/image-1.png"),
+    );
+    expect(onedrive.getItem).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("/imgs/image-2.png"),
+    );
+    expect(onedrive.getItem).toHaveBeenNthCalledWith(
+      4,
+      expect.stringContaining("/imgs/image-3.png"),
+    );
     expect(onedrive.saveBinary).toHaveBeenCalledTimes(2);
     expect(onedrive.saveBinary).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining("/imgs/image-1.png"),
+      expect.stringContaining("/imgs/image-2.png"),
       expect.any(Uint8Array),
       "image/png",
     );
     expect(onedrive.saveBinary).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining("/imgs/image-2.png"),
+      expect.stringContaining("/imgs/image-3.png"),
       expect.any(Uint8Array),
       "image/png",
     );

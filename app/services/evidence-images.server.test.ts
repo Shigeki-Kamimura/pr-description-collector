@@ -181,7 +181,7 @@ describe("downloadImageWithRetry", () => {
 
   it("localhost 宛てURLは SSRF ガードで拒否する", async () => {
     const fetchFn = vi.fn<typeof fetch>();
-    const result = await downloadImageWithRetry("http://localhost/internal.png", {
+    const result = await downloadImageWithRetry("https://localhost/internal.png", {
       fetchFn,
     });
     expect(result).toEqual({ ok: false, errorReason: "BLOCKED_PRIVATE_HOST" });
@@ -190,10 +190,19 @@ describe("downloadImageWithRetry", () => {
 
   it("リンクローカルIP宛てURLは SSRF ガードで拒否する", async () => {
     const fetchFn = vi.fn<typeof fetch>();
-    const result = await downloadImageWithRetry("http://169.254.169.254/latest/meta-data/", {
+    const result = await downloadImageWithRetry("https://169.254.169.254/latest/meta-data/", {
       fetchFn,
     });
     expect(result).toEqual({ ok: false, errorReason: "BLOCKED_PRIVATE_HOST" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("http スキームは UNSUPPORTED_PROTOCOL で拒否する", async () => {
+    const fetchFn = vi.fn<typeof fetch>();
+    const result = await downloadImageWithRetry("http://github.com/user-attachments/assets/a.png", {
+      fetchFn,
+    });
+    expect(result).toEqual({ ok: false, errorReason: "UNSUPPORTED_PROTOCOL" });
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
