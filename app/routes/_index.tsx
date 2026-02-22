@@ -285,6 +285,7 @@ export default function Index() {
   const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false);
   const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false);
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
+  const [isDescriptionOpen, setIsDescriptionOpen] = useState(true);
   const [transportError, setTransportError] = useState<string | null>(null);
   const collectRequestStartedRef = useRef(false);
   const uploadRequestStartedRef = useRef(false);
@@ -625,6 +626,7 @@ export default function Index() {
                     setShowPrRefAnnotation(false);
                   }
                   setShowParseErrorAnnotation(true);
+                  setIsDescriptionOpen(false);
                 }}
               >
                 Parse Checklist
@@ -640,7 +642,7 @@ export default function Index() {
           <p>Fetched Pull Request Title: <span className="fetched-pr-title">{collectFetcher.data.pullRequest.title}</span></p>
         ) : null}
         {renderedDescriptionHtml ? (
-          <details open>
+          <details open={isDescriptionOpen} onToggle={(e) => setIsDescriptionOpen(e.currentTarget.open)}>
             <summary>Show description</summary>
             <article
               className="markdown-body"
