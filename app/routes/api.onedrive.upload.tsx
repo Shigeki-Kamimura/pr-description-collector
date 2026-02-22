@@ -15,7 +15,7 @@ import {
 } from "../services/github.server";
 import { getHttpStatus } from "../services/http-status";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
-import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
+import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
 // CSRFトークンの検証ユーティリティ
 import {
   buildImageBaseName,
@@ -555,7 +555,7 @@ async function saveEvidenceImages({
           .map((record) => record.onedrivePath as string);
         throw new EvidenceImagesSaveError(rawMessage, savedPaths);
       }
-      if (isOneDriveApiError(rawMessage)) {
+      if (error instanceof OneDriveApiError) {
         consecutiveOneDriveSaveFailures += 1;
         results.push({
           sourceUrl,
@@ -567,7 +567,6 @@ async function saveEvidenceImages({
         continue;
       }
       const parsed = extractOneDriveError(rawMessage);
-      consecutiveOneDriveSaveFailures = 0;
       results.push({
         sourceUrl,
         status: "failed",
@@ -580,10 +579,6 @@ async function saveEvidenceImages({
     }
   }
   return results;
-}
-
-function isOneDriveApiError(rawMessage: string): boolean {
-  return rawMessage.toLowerCase().includes("onedrive api error");
 }
 
 function getEvidenceImageMaxBytes(): number {

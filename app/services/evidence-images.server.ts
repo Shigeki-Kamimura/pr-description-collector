@@ -18,6 +18,8 @@ type DownloadImageOptions = {
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024;
+const RETRY_BACKOFF_BASE_MS = 1_000;
+const RETRY_BACKOFF_MAX_MS = 10_000;
 const DEFAULT_ALLOWED_IMAGE_HOSTS = [
   "github.com",
   "user-images.githubusercontent.com",
@@ -231,8 +233,10 @@ export async function downloadImageWithRetry(
       if (!response.ok) {
         const reason = `HTTP_${response.status}`;
         const retryable = RETRYABLE_STATUS.has(response.status);
+        // リトライ可能で、かつまだリトライ回数が残っている場合は待機してから再試行する。そうでない場合は失敗として返す。
         if (retryable && attempt < maxAttempts) {
           lastReason = reason;
+          await waitBeforeRetry(attempt, response.headers.get("retry-after"));
           continue;
         }
         return { ok: false, errorReason: reason };
@@ -253,12 +257,18 @@ export async function downloadImageWithRetry(
       }
       if (error instanceof DOMException && error.name === "AbortError") {
         lastReason = "TIMEOUT";
-        if (attempt < maxAttempts) continue;
+        if (attempt < maxAttempts) {
+          await waitBeforeRetry(attempt);
+          continue;
+        }
         return { ok: false, errorReason: "TIMEOUT" };
       }
       if (error instanceof TypeError) {
         lastReason = "NETWORK_ERROR";
-        if (attempt < maxAttempts) continue;
+        if (attempt < maxAttempts) {
+          await waitBeforeRetry(attempt);
+          continue;
+        }
         return { ok: false, errorReason: "NETWORK_ERROR" };
       }
       const message = error instanceof Error ? error.message : String(error);
@@ -268,6 +278,30 @@ export async function downloadImageWithRetry(
     }
   }
   return { ok: false, errorReason: lastReason };
+}
+
+// リトライの待機時間を計算して待機する。リトライ回数に応じた指数バックオフと、サーバーからの Retry-After ヘッダーの両方を考慮する。
+async function waitBeforeRetry(attempt: number, retryAfter: string | null = null): Promise<void> {
+  const retryAfterMs = parseRetryAfterMs(retryAfter);
+  const backoffMs = Math.min(RETRY_BACKOFF_BASE_MS * attempt, RETRY_BACKOFF_MAX_MS);
+  const delayMs = retryAfterMs ?? backoffMs;
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+// Retry-After ヘッダーの値を解析して、次のリクエストまで待つべき時間をミリ秒で返す。値が無効な場合は null を返す。
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number.parseInt(value, 10);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+  const dateMs = Date.parse(value);
+  if (!Number.isFinite(dateMs)) return null;
+  const deltaMs = dateMs - Date.now();
+  if (deltaMs <= 0) return null;
+  return deltaMs;
 }
 
 function getContentLength(value: string | null): number | null {

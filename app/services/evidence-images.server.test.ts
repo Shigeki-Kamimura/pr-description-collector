@@ -46,25 +46,36 @@ text
 
 describe("downloadImageWithRetry", () => {
   it("一時エラー後の再試行で成功する", async () => {
-    const fetchFn = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response("busy", { status: 503 }))
-      .mockResolvedValueOnce(
-        new Response(new Uint8Array([1, 2, 3]), {
-          status: 200,
-          headers: { "content-type": "image/png" },
-        }),
-      );
-    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/a.png", {
-      timeoutMs: 1000,
-      maxAttempts: 3,
-      fetchFn,
-    });
-    expect("ok" in result).toBe(false);
-    if ("ok" in result) return;
-    expect(result.contentType).toBe("image/png");
-    expect(Array.from(result.bytes)).toEqual([1, 2, 3]);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers();
+    try {
+      const fetchFn = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response("busy", { status: 503 }))
+        .mockResolvedValueOnce(
+          new Response(new Uint8Array([1, 2, 3]), {
+            status: 200,
+            headers: { "content-type": "image/png" },
+          }),
+        );
+      const resultPromise = downloadImageWithRetry("https://github.com/user-attachments/assets/a.png", {
+        timeoutMs: 1000,
+        maxAttempts: 3,
+        fetchFn,
+      });
+      await Promise.resolve();
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await resultPromise;
+      expect("ok" in result).toBe(false);
+      if ("ok" in result) return;
+      expect(result.contentType).toBe("image/png");
+      expect(Array.from(result.bytes)).toEqual([1, 2, 3]);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("タイムアウト時は TIMEOUT を返す", async () => {
