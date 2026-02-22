@@ -17,9 +17,11 @@ type DownloadImageOptions = {
 };
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024;
 const RETRY_BACKOFF_BASE_MS = 1_000;
 const RETRY_BACKOFF_MAX_MS = 10_000;
+const MAX_REDIRECTS = 5;
 const DEFAULT_ALLOWED_IMAGE_HOSTS = [
   "github.com",
   "user-images.githubusercontent.com",
@@ -226,10 +228,15 @@ export async function downloadImageWithRetry(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetchFn(url, {
-        method: "GET",
+      const fetched = await fetchWithValidatedRedirects({
+        initialUrl: url,
+        fetchFn,
         signal: controller.signal,
       });
+      if ("ok" in fetched) {
+        return fetched;
+      }
+      const response = fetched.response;
       if (!response.ok) {
         const reason = `HTTP_${response.status}`;
         const retryable = RETRYABLE_STATUS.has(response.status);
@@ -283,6 +290,45 @@ export async function downloadImageWithRetry(
     }
   }
   return { ok: false, errorReason: lastReason };
+}
+
+async function fetchWithValidatedRedirects({
+  initialUrl,
+  fetchFn,
+  signal,
+}: {
+  initialUrl: string;
+  fetchFn: typeof fetch;
+  signal: AbortSignal;
+}): Promise<{ response: Response } | EvidenceDownloadFailure> {
+  let currentUrl = initialUrl;
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    const blockedReason = getBlockedHostReason(currentUrl);
+    if (blockedReason) {
+      return { ok: false, errorReason: blockedReason };
+    }
+    const response = await fetchFn(currentUrl, {
+      method: "GET",
+      signal,
+      redirect: "manual",
+    });
+    if (!REDIRECT_STATUSES.has(response.status)) {
+      return { response };
+    }
+    const location = response.headers.get("location");
+    if (!location) {
+      return { ok: false, errorReason: `HTTP_${response.status}` };
+    }
+    if (redirectCount === MAX_REDIRECTS) {
+      return { ok: false, errorReason: "TOO_MANY_REDIRECTS" };
+    }
+    try {
+      currentUrl = new URL(location, currentUrl).toString();
+    } catch {
+      return { ok: false, errorReason: "INVALID_REDIRECT_URL" };
+    }
+  }
+  return { ok: false, errorReason: "TOO_MANY_REDIRECTS" };
 }
 
 // リトライの待機時間を計算して待機する。リトライ回数に応じた指数バックオフと、サーバーからの Retry-After ヘッダーの両方を考慮する。

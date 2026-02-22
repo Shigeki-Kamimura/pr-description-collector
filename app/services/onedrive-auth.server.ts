@@ -20,14 +20,14 @@ const DEFAULT_TENANT = "common";
 const SCOPES = ["offline_access", "Files.ReadWrite", "User.Read"];
 const DEFAULT_OAUTH_REQUEST_TIMEOUT_SECONDS = 180;
 
-function parseTimeoutMs(value: string | undefined, fallback: number): number {
+function parseTimeoutSecondsToMs(value: string | undefined, fallbackMs: number): number {
   const parsedSeconds = Number.parseInt(value ?? "", 10);
-  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) return fallback;
+  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) return fallbackMs;
   return parsedSeconds * 1000;
 }
 
-const OAUTH_REQUEST_TIMEOUT_MS = parseTimeoutMs(
-  process.env.ONEDRIVE_OAUTH_REQUEST_TIMEOUT_MS,
+const OAUTH_REQUEST_TIMEOUT_MS = parseTimeoutSecondsToMs(
+  process.env.ONEDRIVE_OAUTH_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_OAUTH_REQUEST_TIMEOUT_SECONDS * 1000,
 );
 

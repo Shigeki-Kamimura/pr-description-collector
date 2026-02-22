@@ -116,6 +116,52 @@ describe("downloadImageWithRetry", () => {
     }
   });
 
+  it("許可ホストへのリダイレクトは追従して取得する", async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: {
+            location: "https://user-images.githubusercontent.com/image.png",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array([9, 9]), {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        }),
+      );
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/r1", {
+      maxAttempts: 1,
+      fetchFn,
+    });
+    expect("ok" in result).toBe(false);
+    if ("ok" in result) return;
+    expect(Array.from(result.bytes)).toEqual([9, 9]);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("非許可ホストへのリダイレクトは BLOCKED_UNTRUSTED_HOST で拒否する", async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: {
+            location: "https://example.com/not-allowed.png",
+          },
+        }),
+      );
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/r2", {
+      maxAttempts: 1,
+      fetchFn,
+    });
+    expect(result).toEqual({ ok: false, errorReason: "BLOCKED_UNTRUSTED_HOST" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it("タイムアウト時は TIMEOUT を返す", async () => {
     const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
       await new Promise((_resolve, reject) => {

@@ -24,7 +24,7 @@ function parseTimeoutSecondsToMs(value: string | undefined, fallbackMs: number):
 }
 
 const GITHUB_REQUEST_TIMEOUT_MS = parseTimeoutSecondsToMs(
-  process.env.GITHUB_REQUEST_TIMEOUT_SECONDS ?? process.env.GITHUB_REQUEST_TIMEOUT_MS,
+  process.env.GITHUB_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS * 1000,
 );
 

@@ -571,6 +571,42 @@ describe("api.onedrive.upload action", () => {
     }
   });
 
+  it("画像サイズ上限が単純アップロード上限を超える場合は250MBにクランプする", async () => {
+    const previousMaxKb = process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_KB;
+    process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_KB = "999999";
+    try {
+      github.getPullRequest.mockResolvedValueOnce({
+        number: 123,
+        title: "Test PR",
+        url: "https://github.com/octocat/hello-world/pull/123",
+        body: "![a](https://example.com/a.png)",
+        authorLogin: "author",
+        mergedByLogin: "merger",
+      });
+      vi.mocked(extractUniqueImageUrls).mockReturnValue(["https://example.com/a.png"]);
+      vi.mocked(downloadImageWithRetry).mockResolvedValueOnce({
+        bytes: new Uint8Array([1]),
+        contentType: "image/png",
+      });
+      onedrive.saveText
+        .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+        .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+
+      const response = await action({ request: buildRequest() } as never);
+      expect(response.status).toBe(200);
+      expect(downloadImageWithRetry).toHaveBeenCalledWith(
+        "https://example.com/a.png",
+        expect.objectContaining({ maxBytes: 250 * 1024 * 1024 }),
+      );
+    } finally {
+      if (previousMaxKb === undefined) {
+        delete process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_KB;
+      } else {
+        process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_KB = previousMaxKb;
+      }
+    }
+  });
+
   it("非認証のOneDriveエラーが2件連続したら残り画像をスキップする", async () => {
     const urls = [
       "https://example.com/a.png",

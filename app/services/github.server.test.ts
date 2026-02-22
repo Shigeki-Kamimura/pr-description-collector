@@ -29,7 +29,6 @@ describe("github service pagination", () => {
     vi.resetModules();
     vi.useRealTimers();
     delete process.env.GITHUB_REQUEST_TIMEOUT_SECONDS;
-    delete process.env.GITHUB_REQUEST_TIMEOUT_MS;
   });
 
   it("getPullRequestReviews は 100件超のとき次ページも取得する", async () => {
@@ -97,25 +96,6 @@ describe("github service pagination", () => {
   it("GITHUB_REQUEST_TIMEOUT_SECONDS を優先して秒として解釈する", async () => {
     vi.useFakeTimers();
     process.env.GITHUB_REQUEST_TIMEOUT_SECONDS = "1";
-    process.env.GITHUB_REQUEST_TIMEOUT_MS = "30000";
-    const { createGitHubService } = await import("./github.server");
-    const service = createGitHubService({ token: "token" });
-    const octokit = octokitInstances[0];
-    octokit.rest.pulls.get.mockReturnValue(new Promise(() => {}) as never);
-
-    const requestPromise = service.getPullRequest({
-      repo: { owner: "octocat", name: "hello-world" },
-      number: 123,
-    });
-
-    const assertion = expect(requestPromise).rejects.toThrow("timed out after 1000ms");
-    await vi.advanceTimersByTimeAsync(1_000);
-    await assertion;
-  });
-
-  it("旧キー GITHUB_REQUEST_TIMEOUT_MS も秒として解釈する", async () => {
-    vi.useFakeTimers();
-    process.env.GITHUB_REQUEST_TIMEOUT_MS = "1";
     const { createGitHubService } = await import("./github.server");
     const service = createGitHubService({ token: "token" });
     const octokit = octokitInstances[0];

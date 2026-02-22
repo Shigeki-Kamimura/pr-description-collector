@@ -64,7 +64,8 @@ type EvidenceImageRecord = {
 };
 const DEFAULT_EVIDENCE_IMAGE_MAX_KB = 10 * 1024;
 const BYTES_PER_KILOBYTE = 1024;
-const DEFAULT_EVIDENCE_IMAGE_MAX_COUNT = 20;
+const DEFAULT_EVIDENCE_IMAGE_MAX_COUNT = 20; // 画像の枚数が多すぎると保存処理が重くなったり、OneDrive の容量を圧迫したりする可能性があるため、上限を設ける。
+const MAX_ONEDRIVE_SIMPLE_UPLOAD_BYTES = 250 * 1024 * 1024; // Microsoft Graph 単純アップロードの上限
 const MAX_CONSECUTIVE_ONEDRIVE_SAVE_FAILURES = 2;
 const ONEDRIVE_SAVE_FAILED_REASON = "ONEDRIVE_SAVE_FAILED";
 const ONEDRIVE_SAVE_SKIPPED_REASON = "ONEDRIVE_SAVE_SKIPPED_AFTER_CONSECUTIVE_FAILURE";
@@ -585,17 +586,20 @@ function getEvidenceImageMaxBytes(): number {
   const kbRaw = process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_KB;
   const parsedKb = Number.parseInt(kbRaw ?? "", 10);
   if (Number.isFinite(parsedKb) && parsedKb > 0) {
-    return parsedKb * BYTES_PER_KILOBYTE;
+    return Math.min(parsedKb * BYTES_PER_KILOBYTE, MAX_ONEDRIVE_SIMPLE_UPLOAD_BYTES);
   }
 
   // 後方互換: 旧bytes設定が残っている環境でも動作を維持する。
   const bytesRaw = process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_BYTES;
   const parsedBytes = Number.parseInt(bytesRaw ?? "", 10);
   if (Number.isFinite(parsedBytes) && parsedBytes > 0) {
-    return parsedBytes;
+    return Math.min(parsedBytes, MAX_ONEDRIVE_SIMPLE_UPLOAD_BYTES);
   }
 
-  return DEFAULT_EVIDENCE_IMAGE_MAX_KB * BYTES_PER_KILOBYTE;
+  return Math.min(
+    DEFAULT_EVIDENCE_IMAGE_MAX_KB * BYTES_PER_KILOBYTE,
+    MAX_ONEDRIVE_SIMPLE_UPLOAD_BYTES,
+  );
 }
 
 function getEvidenceImageMaxCount(): number {
