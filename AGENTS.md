@@ -115,12 +115,94 @@ Definition of Done (minimum):
   - Commands run (exact commands), OR
   - NOT RUN + reason + manual verification steps.
 - Any new/changed public contract is locked (tests or explicit invariants).
+- If boundary/failure-mode triggers are present, failure-mode & trust-boundary coverage is reported.
 
 Validation Commands Slot:
-- [HQ|VSCODE] MUST propose the repo-specific validation commands once the stack is inferred.
-  Examples: typecheck, lint, unit/integration tests, build.
-- After changes, [HQ] MUST report which commands were run.
-- If CI exists, [QA] MAY suggest the minimal additional checks only.
+
+############################################################
+# L0/L1 Mandatory Presubmit Gate (CRITICAL)
+############################################################
+
+Gate rule:
+- Before review/merge, FAST checks MUST be green.
+- If FAST is red: 👉 STOP. Fix first.
+- Exception/waiver is allowed ONLY when unavoidable:
+  - MUST include reason + issue link + time-bounded follow-up,
+  - MUST keep the change reversible,
+  - MUST NOT silence errors without justification.
+
+Determinism rule (FAST must be low-flake):
+- No external network dependence in CI.
+- No sleep/time dependence; use fake timers or bounded polling.
+- No randomness without fixed seeds.
+
+Preferred interface:
+- Prefer a single entrypoint:
+  - verify:fast
+  - verify:full
+  (Makefile / package.json scripts / Gradle tasks / Maven profiles are acceptable.)
+- If the repo lacks these, [HQ|VSCODE] MUST:
+  - propose concrete commands, AND
+  - propose how to bundle them into one entrypoint with minimal repo changes.
+
+FAST (required; target <=5 min):
+- format-check (or format-fix via pre-commit)
+- lint (high-signal rules; errors are blocking; warnings use ratchet policy)
+- typecheck
+- unit tests (stable subset)
+- build/compile
+
+FULL (conditional):
+- integration tests / E2E smoke flows
+- dependency / secret scans (if available)
+- heavier static analysis
+- performance smoke (only if feasible)
+
+Trigger FULL when ANY applies:
+- High-risk areas (DB/auth/deps/build/secrets)
+- Boundary/failure-mode triggers (external integrations, public APIs, background jobs, user-facing async side effects)
+- Tooling or release-cutting changes (lockfiles, build config, CI changes)
+
+Lint Warning Ratchet Policy (to reduce false positives):
+- Phase 1 (start): block on errors; allow warnings.
+- Phase 2 (stabilize): block on warning growth (ratchet):
+  - ESLint example: `--max-warnings <current>`
+- Phase 3 (converge): reduce the warning cap gradually; only aim for 0 when stable.
+
+Stack Presets (FAST defaults; adjust to repo conventions):
+- Remix（TypeScript）:
+  - prettier . --check
+  - eslint .
+  - tsc --noEmit
+  - unit: vitest run (or jest)
+  - remix build
+- Next.js（TypeScript）:
+  - prettier . --check
+  - eslint .
+  - tsc --noEmit
+  - unit: vitest run (or jest)
+  - next build
+- React（TypeScript） + Spring Boot（Java）:
+  - frontend:
+    - prettier . --check
+    - eslint .
+    - tsc --noEmit
+    - unit: vitest run (or jest)
+    - build: npm run build (or vite build / react-scripts build)
+  - backend (pick one):
+    - Gradle: ./gradlew test && ./gradlew bootJar (or ./gradlew build)
+    - Maven:  ./mvnw test && ./mvnw package
+
+Operational note:
+- If CI exists, configure protected-branch required checks to include FAST jobs
+  (format/lint/typecheck/unit/build). Keep FULL conditional to avoid flake.
+
+Validation Commands Slot (operational):
+- [HQ|VSCODE] MUST:
+  - propose FAST and FULL command sets once the stack is inferred,
+  - run FAST after changes (and FULL when triggered),
+  - report exact commands run (or NOT RUN + reason + manual verification steps).
+- If CI exists, [QA] MAY suggest the minimal additional checks only (prefer adding to FULL).
 
 Work Chunking Rule:
 - If the plan exceeds 3 steps OR the change touches >5 files:
@@ -149,6 +231,28 @@ When touching any high-risk area:
   👉 STOP and ask ONE question as [ReqPL].
 
 ############################################################
+# Failure-Mode & Trust-Boundary Review Gate (CRITICAL)
+############################################################
+
+Boundary/failure-mode triggers:
+- external integrations (OneDrive, payments, etc.)
+- public API endpoints (/api/*)
+- background jobs / async workflows
+- user-facing async UI with side effects (save/submit/upload)
+
+When any trigger is present:
+- [ReqPL] MUST specify failure behavior for:
+  - validation errors, auth failure (401/403), timeout/network failure, rate limit (429), server error (5xx)
+  - side effects: what must NOT happen on failure (no partial save, no duplicate submit, etc.)
+  - retry policy / user messaging (if applicable)
+- [HQ] MUST implement:
+  - explicit error handling (no silent failure)
+  - idempotency/duplicate prevention for side-effecting operations (if applicable)
+- [QA] MUST produce (keep it compact):
+  - Trust-boundary checklist (<=6 bullets): authn/authz, input validation, PII/logging, external calls
+  - Failure-mode matrix (<=8 rows): failure → expected behavior → evidence (test/log/screenshot)
+
+############################################################
 # Language
 ############################################################
 
@@ -164,6 +268,9 @@ When touching any high-risk area:
 ############################################################
 
 TECH_STACK_JP = """
+- 個人開発: Remix（TypeScript）
+- チーム開発: React（TypeScript） + Spring Boot（Java）
+- チーム開発: Next.js（TypeScript）
 """
 
 AUTO_DETECT_RULES = """
@@ -243,7 +350,7 @@ Validated progress > theoretical perfection.
 - Non-goals:
 - Constraints / Invariants:
 - Acceptance (Must/Should/Could):
-- Failure behavior:
+- Failure behavior (error/status/user message/side effects/retry):
 - Success signal (how to verify):
 - ONE question (only if ambiguity blocks correctness):
 
@@ -253,12 +360,13 @@ Validated progress > theoretical perfection.
   - Touch:
   - Do NOT touch:
 - Assumptions (only if ReqPL left gaps):
-- Validation (exact commands run / to run, or NOT RUN + reason):
+- Validation (FAST/FULL; exact commands run / to run, or NOT RUN + reason):
 
 ### [QA] Template
 - Contracts changed / locked:
 - Minimal tests (high-signal only):
-- Error-path coverage:
+- Security / Trust boundary coverage (authn/authz/input/PII/logs) [if applicable]:
+- Failure-mode coverage (timeouts/401/403/429/5xx/partial/idempotency/retry):
 - Flake check (time/random/external):
 - Stop condition (why this is enough):
 
