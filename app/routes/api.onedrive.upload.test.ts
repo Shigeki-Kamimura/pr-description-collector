@@ -69,6 +69,7 @@ type MockOneDriveService = {
   saveText: ReturnType<typeof vi.fn>;
   saveBinary: ReturnType<typeof vi.fn>;
   getItem: ReturnType<typeof vi.fn>;
+  getText: ReturnType<typeof vi.fn>;
   deleteItem: ReturnType<typeof vi.fn>;
 };
 
@@ -125,6 +126,7 @@ describe("api.onedrive.upload action", () => {
       saveText: vi.fn(),
       saveBinary: vi.fn().mockResolvedValue({ name: "image.png", webUrl: "https://example.com/image.png" }),
       getItem: vi.fn().mockResolvedValue(null),
+      getText: vi.fn(),
       deleteItem: vi.fn(),
     };
     vi.mocked(createOneDriveServiceFromEnv).mockResolvedValue(onedrive as never);
@@ -305,7 +307,17 @@ describe("api.onedrive.upload action", () => {
         total: number;
         success: number;
         failed: number;
+        alreadySaved: number;
       };
+      alreadySavedFiles: {
+        descriptionMd: boolean;
+        archiveJson: boolean;
+      };
+      evidenceImageRecords: Array<{
+        sourceUrl: string;
+        status: string;
+        webUrl: string | null;
+      }>;
       uploaded: {
         descriptionMd: { name: string; webUrl: string };
         archiveJson: { name: string; webUrl: string };
@@ -327,8 +339,78 @@ describe("api.onedrive.upload action", () => {
       total: 0,
       success: 0,
       failed: 0,
+      alreadySaved: 0,
     });
+    expect(body.alreadySavedFiles).toEqual({
+      descriptionMd: false,
+      archiveJson: false,
+    });
+    expect(body.evidenceImageRecords).toEqual([]);
     expect(onedrive.saveText).toHaveBeenCalledTimes(2);
+  });
+
+  it("既存archiveに同一sourceUrlがある場合は画像を再保存せず alreadySaved を返す", async () => {
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: "![a](https://example.com/a.png)",
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue(["https://example.com/a.png"]);
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive" };
+      }
+      if (path.endsWith("/imgs/a.png")) {
+        return { name: "a.png", webUrl: "https://example.com/a-from-onedrive.png" };
+      }
+      return null;
+    });
+    onedrive.getText.mockResolvedValue(
+      JSON.stringify({
+        evidenceImages: [
+          {
+            sourceUrl: "https://example.com/a.png",
+            status: "success",
+            fileName: "a.png",
+            onedrivePath: "project/hello-world/PullRequests/PR123-Test-PR/imgs/a.png",
+          },
+        ],
+      }),
+    );
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive-new" });
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: true;
+      evidenceImages: { total: number; success: number; failed: number; alreadySaved: number };
+      alreadySavedFiles: { descriptionMd: boolean; archiveJson: boolean };
+      evidenceImageRecords: Array<{ sourceUrl: string; status: string; webUrl: string | null }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(onedrive.saveBinary).not.toHaveBeenCalled();
+    expect(body.evidenceImages).toEqual({
+      total: 1,
+      success: 1,
+      failed: 0,
+      alreadySaved: 1,
+    });
+    expect(body.alreadySavedFiles).toEqual({
+      descriptionMd: false,
+      archiveJson: true,
+    });
+    expect(body.evidenceImageRecords).toHaveLength(1);
+    expect(body.evidenceImageRecords[0]).toMatchObject({
+      sourceUrl: "https://example.com/a.png",
+      status: "success",
+      webUrl: "https://example.com/a-from-onedrive.png",
+    });
   });
 
   it("画像URLが重複しても1回だけ保存し evidenceImages に1件記録する", async () => {
@@ -414,7 +496,13 @@ describe("api.onedrive.upload action", () => {
     vi.mocked(downloadImageWithRetry)
       .mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" })
       .mockResolvedValueOnce({ bytes: new Uint8Array([2]), contentType: "image/png" });
-    onedrive.getItem.mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/existing-image" });
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) return null;
+      if (path.endsWith("/imgs/image.png")) {
+        return { name: "image.png", webUrl: "https://example.com/existing-image" };
+      }
+      return null;
+    });
     onedrive.saveText
       .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
       .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
@@ -422,9 +510,9 @@ describe("api.onedrive.upload action", () => {
     const response = await action({ request: buildRequest() } as never);
 
     expect(response.status).toBe(200);
-    expect(onedrive.getItem).toHaveBeenCalledTimes(1);
+    expect(onedrive.getItem).toHaveBeenCalledTimes(3);
     expect(onedrive.getItem).toHaveBeenNthCalledWith(
-      1,
+      3,
       expect.stringContaining("/imgs/image.png"),
     );
     expect(onedrive.saveBinary).toHaveBeenCalledTimes(2);
@@ -454,7 +542,13 @@ describe("api.onedrive.upload action", () => {
     vi.mocked(extractUniqueImageUrls).mockReturnValue(["https://example.com/a.png"]);
     vi.mocked(buildImageBaseName).mockReturnValue("image.png");
     vi.mocked(downloadImageWithRetry).mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" });
-    onedrive.getItem.mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/existing-image" });
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) return null;
+      if (path.endsWith("/imgs/image.png")) {
+        return { name: "image.png", webUrl: "https://example.com/existing-image" };
+      }
+      return null;
+    });
     onedrive.saveBinary
       .mockRejectedValueOnce(new OneDriveApiError("name conflict", 412, "nameAlreadyExists"))
       .mockResolvedValueOnce({ name: "image-2.png", webUrl: "https://example.com/image-2.png" });
@@ -464,7 +558,7 @@ describe("api.onedrive.upload action", () => {
 
     const response = await action({ request: buildRequest() } as never);
     expect(response.status).toBe(200);
-    expect(onedrive.getItem).toHaveBeenCalledTimes(1);
+    expect(onedrive.getItem).toHaveBeenCalledTimes(3);
     expect(onedrive.saveBinary).toHaveBeenCalledTimes(2);
     expect(onedrive.saveBinary).toHaveBeenNthCalledWith(
       1,
