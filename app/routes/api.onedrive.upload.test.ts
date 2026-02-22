@@ -551,16 +551,11 @@ describe("api.onedrive.upload action", () => {
       const archiveBody = JSON.parse(onedrive.saveText.mock.calls[1][1] as string) as {
         evidenceImages: Array<{ sourceUrl: string; status: string; errorReason: string | null }>;
       };
-      expect(archiveBody.evidenceImages).toHaveLength(4);
+      expect(archiveBody.evidenceImages).toHaveLength(3);
       expect(archiveBody.evidenceImages[2]).toMatchObject({
         sourceUrl: "https://example.com/c.png",
         status: "failed",
-        errorReason: "IMAGE_LIMIT_EXCEEDED",
-      });
-      expect(archiveBody.evidenceImages[3]).toMatchObject({
-        sourceUrl: "https://example.com/d.png",
-        status: "failed",
-        errorReason: "IMAGE_LIMIT_EXCEEDED",
+        errorReason: "IMAGE_LIMIT_EXCEEDED_REMAINING:2",
       });
     } finally {
       if (previousLimit === undefined) {

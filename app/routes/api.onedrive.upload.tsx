@@ -69,6 +69,7 @@ const MAX_ONEDRIVE_SIMPLE_UPLOAD_BYTES = 250 * 1024 * 1024; // Microsoft Graph �
 const MAX_CONSECUTIVE_ONEDRIVE_SAVE_FAILURES = 2;
 const ONEDRIVE_SAVE_FAILED_REASON = "ONEDRIVE_SAVE_FAILED";
 const ONEDRIVE_SAVE_SKIPPED_REASON = "ONEDRIVE_SAVE_SKIPPED_AFTER_CONSECUTIVE_FAILURE";
+const IMAGE_LIMIT_EXCEEDED_REMAINING_REASON = "IMAGE_LIMIT_EXCEEDED_REMAINING";
 
 /*
 / 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
@@ -481,14 +482,15 @@ async function saveEvidenceImages({
 
   for (const [index, sourceUrl] of urls.entries()) {
     if (index >= maxImageCount) {
+      const remainingCount = urls.length - index;
       results.push({
         sourceUrl,
         status: "failed",
         fileName: null,
         onedrivePath: null,
-        errorReason: "IMAGE_LIMIT_EXCEEDED",
+        errorReason: `${IMAGE_LIMIT_EXCEEDED_REMAINING_REASON}:${remainingCount}`,
       });
-      continue;
+      break;
     }
     if (consecutiveOneDriveSaveFailures >= MAX_CONSECUTIVE_ONEDRIVE_SAVE_FAILURES) {
       results.push({
