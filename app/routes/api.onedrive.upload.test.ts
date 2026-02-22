@@ -507,6 +507,60 @@ describe("api.onedrive.upload action", () => {
     });
   });
 
+  it("画像件数が上限を超える場合は超過分をスキップして failed 記録する", async () => {
+    const previousLimit = process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_COUNT;
+    process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_COUNT = "2";
+    try {
+      const urls = [
+        "https://example.com/a.png",
+        "https://example.com/b.png",
+        "https://example.com/c.png",
+        "https://example.com/d.png",
+      ];
+      github.getPullRequest.mockResolvedValueOnce({
+        number: 123,
+        title: "Test PR",
+        url: "https://github.com/octocat/hello-world/pull/123",
+        body: urls.map((url, i) => `![${i}](${url})`).join("\n"),
+        authorLogin: "author",
+        mergedByLogin: "merger",
+      });
+      vi.mocked(extractUniqueImageUrls).mockReturnValue(urls);
+      vi.mocked(buildImageBaseName).mockReturnValue("image.png");
+      vi.mocked(downloadImageWithRetry)
+        .mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" })
+        .mockResolvedValueOnce({ bytes: new Uint8Array([2]), contentType: "image/png" });
+      onedrive.saveText
+        .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+        .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+
+      const response = await action({ request: buildRequest() } as never);
+      expect(response.status).toBe(200);
+      expect(downloadImageWithRetry).toHaveBeenCalledTimes(2);
+      expect(onedrive.saveBinary).toHaveBeenCalledTimes(2);
+      const archiveBody = JSON.parse(onedrive.saveText.mock.calls[1][1] as string) as {
+        evidenceImages: Array<{ sourceUrl: string; status: string; errorReason: string | null }>;
+      };
+      expect(archiveBody.evidenceImages).toHaveLength(4);
+      expect(archiveBody.evidenceImages[2]).toMatchObject({
+        sourceUrl: "https://example.com/c.png",
+        status: "failed",
+        errorReason: "IMAGE_LIMIT_EXCEEDED",
+      });
+      expect(archiveBody.evidenceImages[3]).toMatchObject({
+        sourceUrl: "https://example.com/d.png",
+        status: "failed",
+        errorReason: "IMAGE_LIMIT_EXCEEDED",
+      });
+    } finally {
+      if (previousLimit === undefined) {
+        delete process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_COUNT;
+      } else {
+        process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_COUNT = previousLimit;
+      }
+    }
+  });
+
   it.each([
     {
       status: 401,

@@ -64,6 +64,7 @@ type EvidenceImageRecord = {
 };
 const DEFAULT_EVIDENCE_IMAGE_MAX_KB = 10 * 1024;
 const BYTES_PER_KILOBYTE = 1024;
+const DEFAULT_EVIDENCE_IMAGE_MAX_COUNT = 20;
 
 /*
 / 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
@@ -471,8 +472,19 @@ async function saveEvidenceImages({
   const reservedNames = new Set<string>();
   const results: EvidenceImageRecord[] = [];
   const maxImageBytes = getEvidenceImageMaxBytes();
+  const maxImageCount = getEvidenceImageMaxCount();
 
-  for (const sourceUrl of urls) {
+  for (const [index, sourceUrl] of urls.entries()) {
+    if (index >= maxImageCount) {
+      results.push({
+        sourceUrl,
+        status: "failed",
+        fileName: null,
+        onedrivePath: null,
+        errorReason: "IMAGE_LIMIT_EXCEEDED",
+      });
+      continue;
+    }
     const downloaded = await downloadImageWithRetry(sourceUrl, {
       timeoutMs: 180_000,
       maxAttempts: 3,
@@ -558,6 +570,13 @@ function getEvidenceImageMaxBytes(): number {
   }
 
   return DEFAULT_EVIDENCE_IMAGE_MAX_KB * BYTES_PER_KILOBYTE;
+}
+
+function getEvidenceImageMaxCount(): number {
+  const raw = process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_COUNT;
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_EVIDENCE_IMAGE_MAX_COUNT;
+  return parsed;
 }
 
 // Content-Type ヘッダーから画像の拡張子を推測して、ファイル名のベース部分を生成する。
