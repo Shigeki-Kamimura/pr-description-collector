@@ -16,15 +16,15 @@ import { Octokit } from "octokit";
 import { createAppAuth } from "@octokit/auth-app";
 
 const DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS = 180;
-
-function parseTimeoutMs(value: string | undefined, fallback: number): number {
+// 環境変数から秒単位のタイムアウトをミリ秒に変換して取得するユーティリティ関数
+function parseTimeoutSecondsToMs(value: string | undefined, fallbackMs: number): number {
   const parsedSeconds = Number.parseInt(value ?? "", 10);
-  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) return fallback;
+  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) return fallbackMs;
   return parsedSeconds * 1000;
 }
 
-const GITHUB_REQUEST_TIMEOUT_MS = parseTimeoutMs(
-  process.env.GITHUB_REQUEST_TIMEOUT_MS,
+const GITHUB_REQUEST_TIMEOUT_MS = parseTimeoutSecondsToMs(
+  process.env.GITHUB_REQUEST_TIMEOUT_SECONDS ?? process.env.GITHUB_REQUEST_TIMEOUT_MS,
   DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS * 1000,
 );
 

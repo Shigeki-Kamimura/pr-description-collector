@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createGitHubService } from "./github.server";
 
 const octokitInstances: Array<{
   rest: { pulls: { get: ReturnType<typeof vi.fn>; listReviews: ReturnType<typeof vi.fn> } };
@@ -27,10 +26,14 @@ describe("github service pagination", () => {
   beforeEach(() => {
     octokitInstances.length = 0;
     vi.clearAllMocks();
+    vi.resetModules();
     vi.useRealTimers();
+    delete process.env.GITHUB_REQUEST_TIMEOUT_SECONDS;
+    delete process.env.GITHUB_REQUEST_TIMEOUT_MS;
   });
 
   it("getPullRequestReviews は 100件超のとき次ページも取得する", async () => {
+    const { createGitHubService } = await import("./github.server");
     const service = createGitHubService({ token: "token" });
     const octokit = octokitInstances[0];
     const listReviews = octokit.rest.pulls.listReviews;
@@ -76,6 +79,7 @@ describe("github service pagination", () => {
 
   it("GitHub API応答がない場合はタイムアウトで失敗する", async () => {
     vi.useFakeTimers();
+    const { createGitHubService } = await import("./github.server");
     const service = createGitHubService({ token: "token" });
     const octokit = octokitInstances[0];
     octokit.rest.pulls.get.mockReturnValue(new Promise(() => {}) as never);
@@ -87,6 +91,43 @@ describe("github service pagination", () => {
 
     const assertion = expect(requestPromise).rejects.toThrow(/timed out after \d+ms/);
     await vi.advanceTimersByTimeAsync(180_000);
+    await assertion;
+  });
+
+  it("GITHUB_REQUEST_TIMEOUT_SECONDS を優先して秒として解釈する", async () => {
+    vi.useFakeTimers();
+    process.env.GITHUB_REQUEST_TIMEOUT_SECONDS = "1";
+    process.env.GITHUB_REQUEST_TIMEOUT_MS = "30000";
+    const { createGitHubService } = await import("./github.server");
+    const service = createGitHubService({ token: "token" });
+    const octokit = octokitInstances[0];
+    octokit.rest.pulls.get.mockReturnValue(new Promise(() => {}) as never);
+
+    const requestPromise = service.getPullRequest({
+      repo: { owner: "octocat", name: "hello-world" },
+      number: 123,
+    });
+
+    const assertion = expect(requestPromise).rejects.toThrow("timed out after 1000ms");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await assertion;
+  });
+
+  it("旧キー GITHUB_REQUEST_TIMEOUT_MS も秒として解釈する", async () => {
+    vi.useFakeTimers();
+    process.env.GITHUB_REQUEST_TIMEOUT_MS = "1";
+    const { createGitHubService } = await import("./github.server");
+    const service = createGitHubService({ token: "token" });
+    const octokit = octokitInstances[0];
+    octokit.rest.pulls.get.mockReturnValue(new Promise(() => {}) as never);
+
+    const requestPromise = service.getPullRequest({
+      repo: { owner: "octocat", name: "hello-world" },
+      number: 123,
+    });
+
+    const assertion = expect(requestPromise).rejects.toThrow("timed out after 1000ms");
+    await vi.advanceTimersByTimeAsync(1_000);
     await assertion;
   });
 });
