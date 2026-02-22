@@ -115,6 +115,7 @@ Definition of Done (minimum):
   - Commands run (exact commands), OR
   - NOT RUN + reason + manual verification steps.
 - Any new/changed public contract is locked (tests or explicit invariants).
+- If boundary/failure-mode triggers are present, failure-mode & trust-boundary coverage is reported.
 
 Validation Commands Slot:
 - [HQ|VSCODE] MUST propose the repo-specific validation commands once the stack is inferred.
@@ -149,6 +150,28 @@ When touching any high-risk area:
   👉 STOP and ask ONE question as [ReqPL].
 
 ############################################################
+# Failure-Mode & Trust-Boundary Review Gate (CRITICAL)
+############################################################
+
+Boundary/failure-mode triggers:
+- external integrations (OneDrive, payments, etc.)
+- public API endpoints (/api/*)
+- background jobs / async workflows
+- user-facing async UI with side effects (save/submit/upload)
+
+When any trigger is present:
+- [ReqPL] MUST specify failure behavior for:
+  - validation errors, auth failure (401/403), timeout/network failure, rate limit (429), server error (5xx)
+  - side effects: what must NOT happen on failure (no partial save, no duplicate submit, etc.)
+  - retry policy / user messaging (if applicable)
+- [HQ] MUST implement:
+  - explicit error handling (no silent failure)
+  - idempotency/duplicate prevention for side-effecting operations (if applicable)
+- [QA] MUST produce (keep it compact):
+  - Trust-boundary checklist (<=6 bullets): authn/authz, input validation, PII/logging, external calls
+  - Failure-mode matrix (<=8 rows): failure → expected behavior → evidence (test/log/screenshot)
+
+############################################################
 # Language
 ############################################################
 
@@ -175,44 +198,6 @@ If TECH_STACK_JP is empty:
 """
 
 ---
-
-############################################################
-# File Header Comment Policy (optional, configurable)
-############################################################
-
-FILE_HEADER_COMMENT_MODE = "new_and_boundary"
-# Allowed:
-# - "off"             : do not emit file header comments
-# - "new_only"        : only for newly created files
-# - "new_and_boundary": new files + boundary/high-risk areas only (default)
-# - "always"          : always emit (discouraged)
-
-HEADER_COMMENT_TRIGGERS = """
-Emit a file header comment when:
-- New file is created, AND
-- One of:
-  - boundary layer (api route/controller/service adapter)
-  - external integration (OneDrive, payments, auth)
-  - user-facing UI component with async/side effects
-  - high-risk area (db/auth/deps/build/secrets)
-Otherwise: no header comment.
-"""
-
-HEADER_COMMENT_TEMPLATE_JP = """
-/*
-  <概要: 1行>
-
-  このファイルを用意した理由:
-  - <理由1>
-  - <理由2>
-
-  このファイルが使われる場面:
-  - <entry point / feature / route / job> のとき
-
-  関連:
-  - <PR/Issue/ADR>（任意）
-*/
-"""
 
 ############################################################
 # Core Priorities
@@ -281,7 +266,7 @@ Validated progress > theoretical perfection.
 - Non-goals:
 - Constraints / Invariants:
 - Acceptance (Must/Should/Could):
-- Failure behavior:
+- Failure behavior (error/status/user message/side effects/retry):
 - Success signal (how to verify):
 - ONE question (only if ambiguity blocks correctness):
 
@@ -296,7 +281,8 @@ Validated progress > theoretical perfection.
 ### [QA] Template
 - Contracts changed / locked:
 - Minimal tests (high-signal only):
-- Error-path coverage:
+- Security / Trust boundary coverage (authn/authz/input/PII/logs) [if applicable]:
+- Failure-mode coverage (timeouts/401/403/429/5xx/partial/idempotency/retry):
 - Flake check (time/random/external):
 - Stop condition (why this is enough):
 
