@@ -193,6 +193,51 @@ describe("api.onedrive.upload action", () => {
     warnSpy.mockRestore();
   });
 
+  it("archive保存失敗後に画像ロールバックが一部失敗した場合は partial を記録する", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: "![a](https://example.com/a.png)\n![b](https://example.com/b.png)",
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue([
+      "https://example.com/a.png",
+      "https://example.com/b.png",
+    ]);
+    vi.mocked(downloadImageWithRetry)
+      .mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([2]), contentType: "image/png" });
+    onedrive.saveBinary
+      .mockResolvedValueOnce({ name: "image-a.png", webUrl: "https://example.com/a" })
+      .mockResolvedValueOnce({ name: "image-b.png", webUrl: "https://example.com/b" });
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockRejectedValueOnce(new Error("archive write failed"));
+    onedrive.deleteItem
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("permission denied"))
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined);
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; error: string };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "OneDrive upload failed.",
+      expect.objectContaining({
+        message: expect.stringContaining("evidenceCleanup=partial"),
+      }),
+    );
+    errorSpy.mockRestore();
+  });
+
   it("OneDrive認証エラーを 401 / isAuthError=true で返す", async () => {
     onedrive.getDriveInfo.mockRejectedValue(
       new Error("OneDrive API error (401) [code=InvalidAuthenticationToken]: token expired"),
@@ -735,6 +780,97 @@ describe("api.onedrive.upload action", () => {
       status: "failed",
       errorReason: "ONEDRIVE_SAVE_SKIPPED_AFTER_CONSECUTIVE_FAILURE",
     });
+  });
+
+  it("OneDriveエラーの間にダウンロード失敗がある場合はカウンタをリセットする", async () => {
+    const urls = [
+      "https://example.com/a.png",
+      "https://example.com/b.png",
+      "https://example.com/c.png",
+      "https://example.com/d.png",
+    ];
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: urls.map((url, i) => `![${i}](${url})`).join("\n"),
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue(urls);
+    vi.mocked(buildImageBaseName).mockReturnValue("image.png");
+    vi.mocked(downloadImageWithRetry)
+      .mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" })
+      .mockResolvedValueOnce({ ok: false, errorReason: "TIMEOUT" })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([3]), contentType: "image/png" })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([4]), contentType: "image/png" });
+    onedrive.saveBinary
+      .mockRejectedValueOnce(new OneDriveApiError("quota exceeded", 507, "insufficientStorage"))
+      .mockRejectedValueOnce(new OneDriveApiError("quota still exceeded", 507, "insufficientStorage"))
+      .mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/image.png" });
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+
+    const response = await action({ request: buildRequest() } as never);
+    expect(response.status).toBe(200);
+    expect(downloadImageWithRetry).toHaveBeenCalledTimes(4);
+    expect(onedrive.saveBinary).toHaveBeenCalledTimes(3);
+    const archiveBody = JSON.parse(onedrive.saveText.mock.calls[1][1] as string) as {
+      evidenceImages: Array<{ sourceUrl: string; status: string; errorReason: string | null }>;
+    };
+    expect(archiveBody.evidenceImages).toHaveLength(4);
+    expect(archiveBody.evidenceImages[0]).toMatchObject({ status: "failed", errorReason: "ONEDRIVE_SAVE_FAILED" });
+    expect(archiveBody.evidenceImages[1]).toMatchObject({ status: "failed", errorReason: "TIMEOUT" });
+    expect(archiveBody.evidenceImages[2]).toMatchObject({ status: "failed", errorReason: "ONEDRIVE_SAVE_FAILED" });
+    expect(archiveBody.evidenceImages[3]).toMatchObject({ status: "success" });
+  });
+
+  it("OneDriveエラーの間に非画像Content-Type失敗がある場合はカウンタをリセットする", async () => {
+    const urls = [
+      "https://example.com/a.png",
+      "https://example.com/b.png",
+      "https://example.com/c.png",
+      "https://example.com/d.png",
+    ];
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: urls.map((url, i) => `![${i}](${url})`).join("\n"),
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue(urls);
+    vi.mocked(buildImageBaseName).mockReturnValue("image.png");
+    vi.mocked(downloadImageWithRetry)
+      .mockResolvedValueOnce({ bytes: new Uint8Array([1]), contentType: "image/png" })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([2]), contentType: "text/html" })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([3]), contentType: "image/png" })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([4]), contentType: "image/png" });
+    onedrive.saveBinary
+      .mockRejectedValueOnce(new OneDriveApiError("quota exceeded", 507, "insufficientStorage"))
+      .mockRejectedValueOnce(new OneDriveApiError("quota still exceeded", 507, "insufficientStorage"))
+      .mockResolvedValueOnce({ name: "image.png", webUrl: "https://example.com/image.png" });
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+
+    const response = await action({ request: buildRequest() } as never);
+    expect(response.status).toBe(200);
+    expect(downloadImageWithRetry).toHaveBeenCalledTimes(4);
+    expect(onedrive.saveBinary).toHaveBeenCalledTimes(3);
+    const archiveBody = JSON.parse(onedrive.saveText.mock.calls[1][1] as string) as {
+      evidenceImages: Array<{ sourceUrl: string; status: string; errorReason: string | null }>;
+    };
+    expect(archiveBody.evidenceImages).toHaveLength(4);
+    expect(archiveBody.evidenceImages[0]).toMatchObject({ status: "failed", errorReason: "ONEDRIVE_SAVE_FAILED" });
+    expect(archiveBody.evidenceImages[1]).toMatchObject({
+      status: "failed",
+      errorReason: "UNSUPPORTED_CONTENT_TYPE: text/html",
+    });
+    expect(archiveBody.evidenceImages[2]).toMatchObject({ status: "failed", errorReason: "ONEDRIVE_SAVE_FAILED" });
+    expect(archiveBody.evidenceImages[3]).toMatchObject({ status: "success" });
   });
 
   it.each([

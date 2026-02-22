@@ -205,18 +205,29 @@ export async function action({ request }: ActionFunctionArgs) {
         const savedEvidencePaths = collectSavedEvidencePaths(evidenceImages, writeError);
         // description.md は保存されたがarchive.jsonの保存に失敗した場合、description.mdとevidenceImagesで保存された画像を削除するロールバックを試みる。
         if (savedEvidencePaths.length > 0) {
-          rollbackEvidenceCleanup = "ok";
+          let evidenceDeleteSuccessCount = 0;
+          let evidenceDeleteFailureCount = 0;
+          let lastEvidenceDeleteFailureReason = "unknown";
           for (const imagePath of savedEvidencePaths) {
             try {
               await onedrive.deleteItem(imagePath);
+              evidenceDeleteSuccessCount += 1;
             } catch (imageCleanupError) {
               const reason = imageCleanupError instanceof Error ? imageCleanupError.message : String(imageCleanupError);
-              rollbackEvidenceCleanup = `failed (${reason.trim() || "unknown"})`;
+              evidenceDeleteFailureCount += 1;
+              lastEvidenceDeleteFailureReason = reason.trim() || "unknown";
               console.warn("OneDrive rollback image cleanup skipped.", {
                 imagePath,
                 reason,
               });
             }
+          }
+          if (evidenceDeleteFailureCount === 0) {
+            rollbackEvidenceCleanup = "ok";
+          } else if (evidenceDeleteSuccessCount > 0) {
+            rollbackEvidenceCleanup = "partial";
+          } else {
+            rollbackEvidenceCleanup = `failed (${lastEvidenceDeleteFailureReason})`;
           }
           try {
             await onedrive.deleteItem(`${folderPath}/imgs`);
@@ -508,6 +519,7 @@ async function saveEvidenceImages({
       maxBytes: maxImageBytes,
     });
     if ("ok" in downloaded) {
+      consecutiveOneDriveSaveFailures = 0;
       results.push({
         sourceUrl,
         status: "failed",
@@ -520,6 +532,7 @@ async function saveEvidenceImages({
     // ダウンロードは成功したが、Content-Type が画像でない場合は保存せずに失敗とする。
     // これにより、誤ってHTMLやJSONなどの非画像を保存してしまうリスクを減らす。
     if (!isImageContentType(downloaded.contentType)) {
+      consecutiveOneDriveSaveFailures = 0;
       results.push({
         sourceUrl,
         status: "failed",
