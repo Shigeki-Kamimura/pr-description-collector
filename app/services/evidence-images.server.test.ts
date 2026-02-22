@@ -143,6 +143,39 @@ describe("downloadImageWithRetry", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
+  it("リダイレクト応答の body を解放してから追従する", async () => {
+    const redirectBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    });
+    const cancelSpy = vi.spyOn(redirectBody, "cancel");
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(redirectBody, {
+          status: 302,
+          headers: {
+            location: "https://user-images.githubusercontent.com/image.png",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array([7]), {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        }),
+      );
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/redirect-cancel", {
+      maxAttempts: 1,
+      fetchFn,
+    });
+    expect("ok" in result).toBe(false);
+    if ("ok" in result) return;
+    expect(result.bytes.byteLength).toBe(1);
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("非許可ホストへのリダイレクトは BLOCKED_UNTRUSTED_HOST で拒否する", async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
@@ -204,6 +237,26 @@ describe("downloadImageWithRetry", () => {
     });
     expect(result).toEqual({ ok: false, errorReason: "UNSUPPORTED_PROTOCOL" });
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("HTTPエラー時に response body を解放して失敗を返す", async () => {
+    const errorBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+      },
+    });
+    const cancelSpy = vi.spyOn(errorBody, "cancel");
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(errorBody, {
+        status: 503,
+      }),
+    );
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/http-error", {
+      maxAttempts: 1,
+      fetchFn,
+    });
+    expect(result).toEqual({ ok: false, errorReason: "HTTP_503" });
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
   });
 
   it("許可ドメイン外のURLは拒否する", async () => {

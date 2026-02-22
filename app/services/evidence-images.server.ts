@@ -240,6 +240,7 @@ export async function downloadImageWithRetry(
       if (!response.ok) {
         const reason = `HTTP_${response.status}`;
         const retryable = RETRYABLE_STATUS.has(response.status);
+        await cancelResponseBodySafely(response);
         // リトライ可能で、かつまだリトライ回数が残っている場合は待機してから再試行する。そうでない場合は失敗として返す。
         if (retryable && attempt < maxAttempts) {
           lastReason = reason;
@@ -315,6 +316,8 @@ async function fetchWithValidatedRedirects({
     if (!REDIRECT_STATUSES.has(response.status)) {
       return { response };
     }
+    // リダイレクトレスポンスのボディは通常空だが、念のため安全にキャンセルしてリソースを解放する。
+    await cancelResponseBodySafely(response);
     const location = response.headers.get("location");
     if (!location) {
       return { ok: false, errorReason: `HTTP_${response.status}` };
@@ -329,6 +332,16 @@ async function fetchWithValidatedRedirects({
     }
   }
   return { ok: false, errorReason: "TOO_MANY_REDIRECTS" };
+}
+
+async function cancelResponseBodySafely(response: Response): Promise<void> {
+  const body = response.body;
+  if (!body) return;
+  try {
+    await body.cancel();
+  } catch {
+    // noop
+  }
 }
 
 // リトライの待機時間を計算して待機する。リトライ回数に応じた指数バックオフと、サーバーからの Retry-After ヘッダーの両方を考慮する。
