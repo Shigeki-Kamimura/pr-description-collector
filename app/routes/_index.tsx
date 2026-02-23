@@ -291,6 +291,7 @@ export default function Index() {
   const uploadRequestStartedRef = useRef(false);
   const sessionStatusRequestStartedRef = useRef(false);
   const archiveLookupKeyRef = useRef<string | null>(null);
+  const archiveRefreshOnUploadKeyRef = useRef<string | null>(null);
 
   const redirectToTopOnTransportError = () => {
     if (typeof window === "undefined") return;
@@ -358,6 +359,7 @@ export default function Index() {
   useEffect(() => {
     if (uploadFetcher.state !== "idle") {
       uploadRequestStartedRef.current = true;
+      archiveRefreshOnUploadKeyRef.current = null;
       return;
     }
     if (!uploadRequestStartedRef.current) return;
@@ -425,6 +427,8 @@ export default function Index() {
   useEffect(() => {
     if (!uploadFetcher.data?.ok || !prRefValidation.ok) return;
     const key = `${prRefValidation.owner}/${prRefValidation.repo}#${prRefValidation.prNumber}`;
+    if (archiveRefreshOnUploadKeyRef.current === key) return;
+    archiveRefreshOnUploadKeyRef.current = key;
     archiveLookupKeyRef.current = key;
     archiveFetcher.submit(
       {

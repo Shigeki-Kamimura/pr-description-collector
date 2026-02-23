@@ -19,6 +19,12 @@ html, body {
     "Segoe UI Symbol", "Noto Color Emoji", sans-serif;
 }
 
+.basic-block {
+  display: block;
+  width: 100%;
+  margin: auto;
+}
+
 .container {
   max-width: 800px;
   margin: 64px auto 32px;
