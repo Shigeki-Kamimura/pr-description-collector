@@ -118,6 +118,42 @@ export function extractEvidenceImageByChecklistLine(description: string): Record
 
   return evidenceByLine;
 }
+// Evidence画像URLは、Markdownの画像URL形式かプレーンなHTTP URL形式で記載されることを想定している。
+// 両方に対応するため、Markdown画像URL形式を優先的に抽出し、次にプレーンなHTTP URL形式を抽出する。
+function buildEvidenceImageApiUrl(onedrivePath: string, imageAccessToken: string): string {
+  const params = new URLSearchParams({ path: onedrivePath, token: imageAccessToken });
+  return `/api/onedrive/evidence-image?${params.toString()}`;
+}
+
+type ImageErrorDialogInfo = { message: string; isAuthError: boolean } | null;
+
+export function mapPrimaryImageErrorToDialog(status: number): ImageErrorDialogInfo {
+  switch (status) {
+    case 401:
+      return {
+        message: "保存済み画像の表示に失敗しました（OneDrive 認証エラー）。",
+        isAuthError: true,
+      };
+    case 403:
+      return {
+        message: "保存済み画像の表示に失敗しました（OneDrive 権限不足）。",
+        isAuthError: false,
+      };
+    case 429:
+      return {
+        message:
+          "保存済み画像の表示に失敗しました（OneDrive レート制限）。しばらく待って再試行してください。",
+        isAuthError: false,
+      };
+    default:
+      return status >= 500
+        ? {
+            message: "保存済み画像の表示に失敗しました（OneDrive 側の一時障害）。",
+            isAuthError: false,
+          }
+        : null;
+  }
+}
 
 function isFetcherApiResponse(value: unknown): value is { ok: boolean } {
   return typeof value === "object" && value !== null && typeof (value as { ok?: unknown }).ok === "boolean";
@@ -287,6 +323,8 @@ export default function Index() {
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
   const [isDescriptionOpen, setIsDescriptionOpen] = useState(true);
   const [transportError, setTransportError] = useState<string | null>(null);
+  const [primaryImageErrorDialog, setPrimaryImageErrorDialog] = useState<ImageErrorDialogInfo>(null);
+  const primaryImageErrorKeyRef = useRef<string | null>(null);
   const collectRequestStartedRef = useRef(false);
   const uploadRequestStartedRef = useRef(false);
   const sessionStatusRequestStartedRef = useRef(false);
@@ -313,7 +351,11 @@ export default function Index() {
     (sessionStatusFetcher.data &&
       !sessionStatusFetcher.data.ok &&
       sessionStatusFetcher.data.isAuthError) ||
+    primaryImageErrorDialog?.isAuthError ||
     false;
+  const dialogErrorMessage = transportError ?? effectiveError ?? primaryImageErrorDialog?.message ?? "";
+  const dialogErrorContext: "save" | "image" =
+    transportError || effectiveError ? "save" : primaryImageErrorDialog ? "image" : "save";
 
   // 画面上のエラー表示は、APIからのエラーと通信エラーで分ける。
   useEffect(() => {
@@ -476,16 +518,32 @@ export default function Index() {
     [data],
   );
   const savedEvidenceBySource = useMemo(() => {
-    const map = new Map<string, { webUrl: string | null; status: "success" | "failed" }>();
+    // セキュリティ設計: ここで扱うURLはすべてOneDriveに保存されたエビデンス画像のURLであり、ユーザーが直接入力するURLではないため、XSSリスクはないと判断している。
+    const map = new Map<
+      string,
+      {
+        onedrivePath: string | null;
+        imageAccessToken: string | null;
+        webUrl: string | null;
+        status: "success" | "failed";
+      }
+    >();
     if (archiveFetcher.data?.ok && archiveFetcher.data.found) {
       for (const record of archiveFetcher.data.evidenceImages) {
-        map.set(record.normalizedSourceUrl, { webUrl: record.webUrl, status: record.status });
+        map.set(record.normalizedSourceUrl, {
+          onedrivePath: record.onedrivePath,
+          imageAccessToken: record.imageAccessToken,
+          webUrl: record.webUrl,
+          status: record.status,
+        });
       }
       return map;
     }
     if (!uploadFetcher.data?.ok) return map;
     for (const record of uploadFetcher.data.evidenceImageRecords) {
       map.set(normalizeEvidenceSourceUrl(record.sourceUrl), {
+        onedrivePath: record.onedrivePath,
+        imageAccessToken: record.imageAccessToken,
         webUrl: record.webUrl,
         status: record.status,
       });
@@ -677,12 +735,13 @@ export default function Index() {
                 const savedEvidence = sourceEvidenceUrl
                   ? savedEvidenceBySource.get(normalizeEvidenceSourceUrl(sourceEvidenceUrl))
                   : undefined;
-                const evidenceImageUrl = savedEvidence?.status === "success" ? savedEvidence.webUrl : null;
-                const imageSourceLabel = sourceEvidenceUrl
-                  ? savedEvidence?.status === "success"
-                    ? null
-                    : "未保存プレビュー"
-                  : null;
+                const evidenceImageUrl =
+                  savedEvidence?.status === "success" &&
+                  savedEvidence.onedrivePath &&
+                  savedEvidence.imageAccessToken
+                    ? buildEvidenceImageApiUrl(savedEvidence.onedrivePath, savedEvidence.imageAccessToken)
+                    : null;
+                const imageSourceLabel = sourceEvidenceUrl ? "未保存プレビュー" : null;
                 return (
                   <li key={item.line}>
                     <ChecklistCard
@@ -691,6 +750,15 @@ export default function Index() {
                       evidenceImageUrl={evidenceImageUrl}
                       evidenceFallbackUrl={sourceEvidenceUrl}
                       imageSourceLabel={imageSourceLabel}
+                      onPrimaryImageError={(status) => {
+                        const mapped = mapPrimaryImageErrorToDialog(status);
+                        if (!mapped) return;
+                        const key = `${status}:${mapped.message}`;
+                        if (primaryImageErrorKeyRef.current === key) return;
+                        primaryImageErrorKeyRef.current = key;
+                        setPrimaryImageErrorDialog(mapped);
+                        setIsErrorDialogOpen(true);
+                      }}
                     />
                   </li>
                 );
@@ -711,9 +779,12 @@ export default function Index() {
         onClose={() => {
           setIsErrorDialogOpen(false);
           setTransportError(null);
+          setPrimaryImageErrorDialog(null);
+          primaryImageErrorKeyRef.current = null;
         }}
-        error={transportError ?? effectiveError ?? ""}
+        error={dialogErrorMessage}
         isAuthError={isAuthError}
+        errorContext={dialogErrorContext}
       />
       <SuccessDialog
         open={isSuccessDialogOpen}

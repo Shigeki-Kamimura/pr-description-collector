@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { checklistResultText, resolveChecklistCardImageUrl } from "../components/ChecklistCard";
-import { extractEvidenceImageByChecklistLine, extractResultByChecklistLine } from "./_index";
+import {
+  extractEvidenceImageByChecklistLine,
+  extractResultByChecklistLine,
+  mapPrimaryImageErrorToDialog,
+} from "./_index";
 
 describe("resolveChecklistCardImageUrl", () => {
   it("主URLが有効なら主URLを返す", () => {
@@ -13,6 +17,15 @@ describe("resolveChecklistCardImageUrl", () => {
     expect(resolveChecklistCardImageUrl("not-url", "https://fallback.example.com/a.png")).toBe(
       "https://fallback.example.com/a.png",
     );
+  });
+
+  it("相対URL（アプリ内API）は有効URLとして扱う", () => {
+    expect(
+      resolveChecklistCardImageUrl(
+        "/api/onedrive/evidence-image?path=project/repo/PullRequests/PR1-test/imgs/a.png",
+        null,
+      ),
+    ).toBe("/api/onedrive/evidence-image?path=project/repo/PullRequests/PR1-test/imgs/a.png");
   });
 
   it("主URL/フォールバックともに無効なら null を返す", () => {
@@ -93,5 +106,20 @@ describe("extractEvidenceImageByChecklistLine", () => {
     ].join("\n");
 
     expect(extractEvidenceImageByChecklistLine(markdown)).toEqual({});
+  });
+});
+
+describe("mapPrimaryImageErrorToDialog", () => {
+  it("中程度以上のエラーのみダイアログ情報を返す", () => {
+    expect(mapPrimaryImageErrorToDialog(401)).toMatchObject({ isAuthError: true });
+    expect(mapPrimaryImageErrorToDialog(403)).toMatchObject({ isAuthError: false });
+    expect(mapPrimaryImageErrorToDialog(429)).toMatchObject({ isAuthError: false });
+    expect(mapPrimaryImageErrorToDialog(502)).toMatchObject({ isAuthError: false });
+  });
+
+  it("低優先度ステータスは null を返す", () => {
+    expect(mapPrimaryImageErrorToDialog(400)).toBeNull();
+    expect(mapPrimaryImageErrorToDialog(404)).toBeNull();
+    expect(mapPrimaryImageErrorToDialog(415)).toBeNull();
   });
 });

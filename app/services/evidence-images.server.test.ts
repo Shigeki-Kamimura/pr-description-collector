@@ -143,6 +143,33 @@ describe("downloadImageWithRetry", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
+  it("private-user-images へのリダイレクトも追従して取得する", async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: {
+            location: "https://private-user-images.githubusercontent.com/abc123.png",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array([8, 8]), {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        }),
+      );
+    const result = await downloadImageWithRetry("https://github.com/user-attachments/assets/r-private", {
+      maxAttempts: 1,
+      fetchFn,
+    });
+    expect("ok" in result).toBe(false);
+    if ("ok" in result) return;
+    expect(Array.from(result.bytes)).toEqual([8, 8]);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
   it("リダイレクト応答の body を解放してから追従する", async () => {
     const redirectBody = new ReadableStream<Uint8Array>({
       start(controller) {

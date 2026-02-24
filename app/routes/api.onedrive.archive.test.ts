@@ -119,7 +119,13 @@ describe("api.onedrive.archive action", () => {
     const body = (await response.json()) as {
       ok: true;
       found: boolean;
-      evidenceImages: Array<{ sourceUrl: string; normalizedSourceUrl: string; webUrl: string | null; status: string }>;
+      evidenceImages: Array<{
+        sourceUrl: string;
+        normalizedSourceUrl: string;
+        webUrl: string | null;
+        status: string;
+        imageAccessToken: string | null;
+      }>;
     };
 
     expect(response.status).toBe(200);
@@ -132,5 +138,6 @@ describe("api.onedrive.archive action", () => {
       webUrl: "https://example.com/imgs/a.png",
       status: "success",
     });
+    expect(body.evidenceImages[0].imageAccessToken).toMatch(/^[0-9a-f]{64}$/);
   });
 });

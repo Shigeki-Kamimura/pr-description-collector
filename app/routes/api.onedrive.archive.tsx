@@ -15,6 +15,7 @@ import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedr
 import { validatePrRefInput } from "../services/validation";
 import { verifyCsrfToken } from "../services/csrf.server";
 import { normalizeEvidenceSourceUrl } from "../services/evidence-url";
+import { signEvidenceImagePath } from "../services/evidence-image-token.server";
 
 type ArchiveEvidenceImage = {
   sourceUrl: string;
@@ -22,6 +23,7 @@ type ArchiveEvidenceImage = {
   status: "success" | "failed";
   fileName: string | null;
   onedrivePath: string | null;
+  imageAccessToken: string | null;
   webUrl: string | null;
   errorReason: string | null;
 };
@@ -117,6 +119,7 @@ export async function action({ request }: ActionFunctionArgs) {
         status: record.status === "success" ? "success" : "failed",
         fileName: record.fileName ?? null,
         onedrivePath: record.onedrivePath ?? null,
+        imageAccessToken: record.onedrivePath ? signEvidenceImagePath(record.onedrivePath) : null,
         webUrl,
         errorReason: record.errorReason ?? null,
       });

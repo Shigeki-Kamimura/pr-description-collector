@@ -26,6 +26,7 @@ import { parseChecklist } from "../services/checklist";
 import { verifyCsrfToken } from "../services/csrf.server";
 import { normalizeEvidenceSourceUrl } from "../services/evidence-url";
 import { validatePrRefInput } from "../services/validation";
+import { signEvidenceImagePath } from "../services/evidence-image-token.server";
 
 // ルートハンドラーとビジネスロジックを分離するため、OneDrive への保存処理の詳細は services/evidence-images.server.ts に委譲する。
 export type ApiOneDriveUploadResponse =
@@ -43,6 +44,7 @@ export type ApiOneDriveUploadResponse =
         status: EvidenceImageStatus;
         fileName: string | null;
         onedrivePath: string | null;
+        imageAccessToken: string | null;
         webUrl: string | null;
         errorReason: string | null;
       }>;
@@ -312,6 +314,7 @@ export async function action({ request }: ActionFunctionArgs) {
           status: record.status,
           fileName: record.fileName,
           onedrivePath: record.onedrivePath,
+          imageAccessToken: record.onedrivePath ? signEvidenceImagePath(record.onedrivePath) : null,
           webUrl: record.webUrl,
           errorReason: record.errorReason,
         })),
@@ -532,7 +535,7 @@ async function saveEvidenceImages({
 
   for (const [index, sourceUrl] of urls.entries()) {
     const alreadySaved = alreadySavedEvidenceBySource.get(normalizeEvidenceSourceUrl(sourceUrl));
-    if (alreadySaved) {
+    if (alreadySaved && alreadySaved.onedrivePath) {
       results.push({
         sourceUrl,
         status: "success",
@@ -815,14 +818,14 @@ async function loadExistingEvidenceBySource(
     };
     for (const record of parsed.evidenceImages ?? []) {
       if (record.status !== "success" || !record.sourceUrl) continue;
+      if (!record.onedrivePath) continue;
       let webUrl = record.webUrl ?? null;
-      if (!webUrl && record.onedrivePath) {
-        const savedItem = await onedrive.getItem(record.onedrivePath);
-        webUrl = savedItem?.webUrl ?? null;
-      }
+      const savedItem = await onedrive.getItem(record.onedrivePath);
+      if (!savedItem) continue;
+      if (!webUrl) webUrl = savedItem.webUrl;
       result.set(normalizeEvidenceSourceUrl(record.sourceUrl), {
         fileName: record.fileName ?? null,
-        onedrivePath: record.onedrivePath ?? null,
+        onedrivePath: record.onedrivePath,
         webUrl,
       });
     }

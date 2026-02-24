@@ -389,7 +389,12 @@ describe("api.onedrive.upload action", () => {
       ok: true;
       evidenceImages: { total: number; success: number; failed: number; alreadySaved: number };
       alreadySavedFiles: { descriptionMd: boolean; archiveJson: boolean };
-      evidenceImageRecords: Array<{ sourceUrl: string; status: string; webUrl: string | null }>;
+      evidenceImageRecords: Array<{
+        sourceUrl: string;
+        status: string;
+        webUrl: string | null;
+        imageAccessToken: string | null;
+      }>;
     };
 
     expect(response.status).toBe(200);
@@ -410,6 +415,65 @@ describe("api.onedrive.upload action", () => {
       sourceUrl: "https://example.com/a.png",
       status: "success",
       webUrl: "https://example.com/a-from-onedrive.png",
+    });
+    expect(body.evidenceImageRecords[0].imageAccessToken).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("既存archiveに同一sourceUrlがあっても実体画像が無ければ再保存する", async () => {
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: "![a](https://example.com/a.png)",
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue(["https://example.com/a.png"]);
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive" };
+      }
+      if (path.endsWith("/imgs/a.png")) {
+        return null;
+      }
+      return null;
+    });
+    onedrive.getText.mockResolvedValue(
+      JSON.stringify({
+        evidenceImages: [
+          {
+            sourceUrl: "https://example.com/a.png",
+            status: "success",
+            fileName: "a.png",
+            onedrivePath: "project/hello-world/PullRequests/PR123-Test-PR/imgs/a.png",
+          },
+        ],
+      }),
+    );
+    onedrive.saveText
+      .mockResolvedValueOnce({ name: "description.md", webUrl: "https://example.com/desc" })
+      .mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive-new" });
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: true;
+      evidenceImages: { total: number; success: number; failed: number; alreadySaved: number };
+      evidenceImageRecords: Array<{ sourceUrl: string; status: string; errorReason: string | null }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(onedrive.saveBinary).toHaveBeenCalledTimes(1);
+    expect(body.evidenceImages).toEqual({
+      total: 1,
+      success: 1,
+      failed: 0,
+      alreadySaved: 0,
+    });
+    expect(body.evidenceImageRecords[0]).toMatchObject({
+      sourceUrl: "https://example.com/a.png",
+      status: "success",
+      errorReason: null,
     });
   });
 

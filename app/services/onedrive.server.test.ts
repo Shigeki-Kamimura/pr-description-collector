@@ -50,6 +50,74 @@ describe("onedrive service error handling", () => {
     });
   });
 
+  it("getBinary は content-type と bytes を返す", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([7, 8, 9]), {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    const result = await service.getBinary("evidence/image.png");
+    expect(result.contentType).toContain("image/png");
+    expect(Array.from(result.bytes)).toEqual([7, 8, 9]);
+  });
+
+  it("getBinary の 429 は retryAfterSeconds を保持する", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "activityLimitReached", message: "throttled" },
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": "12",
+          },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(service.getBinary("evidence/image.png")).rejects.toMatchObject({
+      name: "OneDriveApiError",
+      status: 429,
+      retryAfterSeconds: 12,
+      retryAfterRaw: "12",
+    });
+  });
+
+  it("getBinary の 429 は Retry-After 日時形式も保持する", async () => {
+    const retryAfterDate = "Wed, 21 Oct 2026 07:28:00 GMT";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "activityLimitReached", message: "throttled" },
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": retryAfterDate,
+          },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(service.getBinary("evidence/image.png")).rejects.toMatchObject({
+      name: "OneDriveApiError",
+      status: 429,
+      retryAfterRaw: retryAfterDate,
+      retryAfterAtIso: "2026-10-21T07:28:00.000Z",
+    });
+  });
+
   it("getItem は 404 を null で返す", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

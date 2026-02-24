@@ -25,6 +25,8 @@ const MAX_REDIRECTS = 5;
 const DEFAULT_ALLOWED_IMAGE_HOSTS = [
   "github.com",
   "user-images.githubusercontent.com",
+  "private-user-images.githubusercontent.com",
+  "media.githubusercontent.com",
   "github-production-user-asset-6210df.s3.amazonaws.com",
 ];
 
