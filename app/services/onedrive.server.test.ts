@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOneDriveService, OneDriveApiError } from "./onedrive.server";
+import { createOneDriveService } from "./onedrive.server";
 
 describe("onedrive service error handling", () => {
   afterEach(() => {
