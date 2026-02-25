@@ -427,6 +427,52 @@ describe("api.onedrive.upload action", () => {
     expect(body.evidenceImageRecords[0].imageAccessToken).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("既存archive読取でOneDrive認証エラーが発生した場合は保存を中止して401を返す", async () => {
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive" };
+      }
+      return null;
+    });
+    onedrive.getText.mockRejectedValue(
+      new OneDriveApiError(
+        "OneDrive API error (401) [code=InvalidAuthenticationToken]: token expired",
+        401,
+        "InvalidAuthenticationToken",
+      ),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; isAuthError: boolean; error: string };
+
+    expect(response.status).toBe(401);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(true);
+    expect(body.error).toBe("OneDrive 認証が切れています。再認証してから保存をやり直してください。");
+    expect(onedrive.saveBinary).not.toHaveBeenCalled();
+    expect(onedrive.saveText).not.toHaveBeenCalled();
+  });
+
+  it("既存archive読取でJSONパース失敗した場合は保存を中止して502を返す", async () => {
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive" };
+      }
+      return null;
+    });
+    onedrive.getText.mockResolvedValue("{invalid-json");
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; isAuthError: boolean; error: string };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
+    expect(onedrive.saveBinary).not.toHaveBeenCalled();
+    expect(onedrive.saveText).not.toHaveBeenCalled();
+  });
+
   it("既存archiveに同一sourceUrlがあっても実体画像が無ければ再保存する", async () => {
     github.getPullRequest.mockResolvedValueOnce({
       number: 123,

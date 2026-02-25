@@ -146,6 +146,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const currentUser = await onedrive.getCurrentUser();
     failureDomain = "internal";
     const checklist = parseChecklist(pullRequest.body);
+    failureDomain = "onedrive";
 
     const approvedReviews = reviews
       .filter((review) => review.state === "APPROVED" && review.submittedAt)
@@ -831,6 +832,6 @@ async function loadExistingEvidenceBySource(
     if (error instanceof OneDriveApiError && error.status === 404) {
       return result;
     }
-    return result;
+    throw error;
   }
 }
