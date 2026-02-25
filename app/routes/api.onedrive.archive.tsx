@@ -11,7 +11,7 @@ import type { ActionFunctionArgs } from "react-router";
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
 import { getHttpStatus } from "../services/http-status";
-import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { validatePrRefInput } from "../services/validation";
 import { verifyCsrfToken } from "../services/csrf.server";
 import { normalizeEvidenceSourceUrl } from "../services/evidence-url";

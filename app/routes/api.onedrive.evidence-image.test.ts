@@ -172,6 +172,18 @@ describe("api.onedrive.evidence-image loader", () => {
     expect(response.status).toBe(415);
   });
 
+  it("SVG content-type は 415 を返す", async () => {
+    onedrive.getBinary.mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      contentType: "image/svg+xml",
+    });
+
+    const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/a.svg");
+    const response = await loader({ request } as never);
+
+    expect(response.status).toBe(415);
+  });
+
   it("429 は Retry-After を返す", async () => {
     onedrive.getBinary.mockRejectedValue(new OneDriveApiError("throttled", 429, "activityLimitReached", 8));
     const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/a.png");

@@ -16,6 +16,14 @@ import {
 } from "../services/evidence-image-token.server";
 
 const MAX_PATH_LENGTH = 1024;
+const ALLOWED_EVIDENCE_IMAGE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+]);
 const TEXT_HEADERS = {
   "Content-Type": "text/plain; charset=utf-8",
   "X-Content-Type-Options": "nosniff",
@@ -47,6 +55,10 @@ function textResponse(status: number, body: string, extraHeaders?: Record<string
     },
   });
 }
+
+function toMime(contentType: string | null | undefined): string {
+  return contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
+}
 // 設計メモ: OneDrive APIからのエラーで、認証関連のエラーと判断されるものが発生した場合は、401を返す。
 // これにより、フロントエンドは認証エラーとそれ以外のエラーを区別して適切にユーザーにフィードバックできるようになる。
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -67,16 +79,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
   try {
     const onedrive = await createOneDriveServiceFromEnv(request);
     const downloaded = await onedrive.getBinary(onedrivePath);
-    const mime = downloaded.contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
-    if (!mime.startsWith("image/")) {
+    const mime = toMime(downloaded.contentType);
+    if (!ALLOWED_EVIDENCE_IMAGE_MIME_TYPES.has(mime)) {
       return textResponse(415, "unsupported evidence content-type");
     }
 
-    const bodyBytes = Uint8Array.from(downloaded.bytes);
-    return new Response(bodyBytes.buffer, {
+    const bytes = downloaded.bytes;
+    const sourceBuffer = bytes.buffer;
+    const arrayBuffer =
+      sourceBuffer instanceof SharedArrayBuffer
+        ? Uint8Array.from(bytes).buffer
+        : (sourceBuffer as ArrayBuffer);
+    const bodyBuffer =
+      bytes.byteOffset === 0 && bytes.byteLength === arrayBuffer.byteLength
+        ? arrayBuffer
+        : arrayBuffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+
+    return new Response(bodyBuffer, {
       status: 200,
       headers: {
-        "Content-Type": downloaded.contentType ?? "application/octet-stream",
+        "Content-Type": mime || "application/octet-stream",
         "Cache-Control": "private, max-age=300",
         "X-Content-Type-Options": "nosniff",
       },
