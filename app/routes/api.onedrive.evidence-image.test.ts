@@ -204,4 +204,13 @@ describe("api.onedrive.evidence-image loader", () => {
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe(retryAfterDate);
   });
+
+  it("OneDrive の 413 は 413 を返す", async () => {
+    onedrive.getBinary.mockRejectedValue(new OneDriveApiError("payload too large", 413, "payloadTooLarge"));
+
+    const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/large.png");
+    const response = await loader({ request } as never);
+
+    expect(response.status).toBe(413);
+  });
 });

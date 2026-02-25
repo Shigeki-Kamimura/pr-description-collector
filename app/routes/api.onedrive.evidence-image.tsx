@@ -125,6 +125,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
                 : {}),
         });
       }
+      if (error.status === 413) {
+        return textResponse(413, "evidence image too large");
+      }
     }
 
     const rawMessage = error instanceof Error ? error.message : String(error);

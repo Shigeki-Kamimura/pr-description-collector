@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOneDriveService } from "./onedrive.server";
 
 describe("onedrive service error handling", () => {
+  const originalGetBinaryMaxBytes = process.env.ONEDRIVE_GET_BINARY_MAX_BYTES;
+
   afterEach(() => {
+    if (originalGetBinaryMaxBytes === undefined) {
+      delete process.env.ONEDRIVE_GET_BINARY_MAX_BYTES;
+    } else {
+      process.env.ONEDRIVE_GET_BINARY_MAX_BYTES = originalGetBinaryMaxBytes;
+    }
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -115,6 +122,47 @@ describe("onedrive service error handling", () => {
       status: 429,
       retryAfterRaw: retryAfterDate,
       retryAfterAtIso: "2026-10-21T07:28:00.000Z",
+    });
+  });
+
+  it("getBinary は content-length が上限超過の場合に 413 を返す", async () => {
+    process.env.ONEDRIVE_GET_BINARY_MAX_BYTES = "4";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4, 5]), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+          "Content-Length": "5",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(service.getBinary("evidence/large.png")).rejects.toMatchObject({
+      name: "OneDriveApiError",
+      status: 413,
+      code: "payloadTooLarge",
+    });
+  });
+
+  it("getBinary は content-length 未設定でも実サイズ超過時に 413 を返す", async () => {
+    process.env.ONEDRIVE_GET_BINARY_MAX_BYTES = "4";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4, 5]), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(service.getBinary("evidence/large.png")).rejects.toMatchObject({
+      name: "OneDriveApiError",
+      status: 413,
+      code: "payloadTooLarge",
     });
   });
 

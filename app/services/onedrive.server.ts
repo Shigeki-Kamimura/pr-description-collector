@@ -7,6 +7,7 @@
  */
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
+const DEFAULT_GET_BINARY_MAX_BYTES = 20 * 1024 * 1024;
 
 export type OneDriveAuth = {
   /** Microsoft Entra ID (旧AAD) / MSAL経由のアクセストークン */
@@ -256,9 +257,77 @@ async function graphBytes(
     throw buildOneDriveApiError(response, await response.text());
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const maxBytes = resolveGetBinaryMaxBytes();
+  const declaredLength = parseContentLength(response.headers.get("content-length"));
+  if (declaredLength !== null && declaredLength > maxBytes) {
+    throw new OneDriveApiError(
+      `OneDrive binary too large (content-length=${declaredLength}, max=${maxBytes})`,
+      413,
+      "payloadTooLarge",
+    );
+  }
+
+  const bytes = await readResponseBytesWithLimit(response, maxBytes);
   const contentType = response.headers.get("content-type");
   return { bytes, contentType };
+}
+// OneDrive APIからのバイナリレスポンスを、サイズ制限を超えないように読み取るユーティリティ
+function resolveGetBinaryMaxBytes(): number {
+  const raw = process.env.ONEDRIVE_GET_BINARY_MAX_BYTES;
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_GET_BINARY_MAX_BYTES;
+  }
+  return parsed;
+}
+// OneDrive APIからのバイナリレスポンスを、サイズ制限を超えないように読み取るユーティリティ
+function parseContentLength(rawValue: string | null): number | null {
+  if (!rawValue) return null;
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+// OneDrive APIからのバイナリレスポンスを、サイズ制限を超えないように読み取るユーティリティ
+async function readResponseBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (!response.body) {
+    const fallbackBytes = new Uint8Array(await response.arrayBuffer());
+    if (fallbackBytes.byteLength > maxBytes) {
+      throw new OneDriveApiError(
+        `OneDrive binary too large (size=${fallbackBytes.byteLength}, max=${maxBytes})`,
+        413,
+        "payloadTooLarge",
+      );
+    }
+    return fallbackBytes;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value || value.byteLength === 0) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new OneDriveApiError(
+        `OneDrive binary too large (size=${total}, max=${maxBytes})`,
+        413,
+        "payloadTooLarge",
+      );
+    }
+    chunks.push(value);
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
 }
 // Graph APIを呼び出して、成功時はレスポンスを無視し、失敗時はエラーをスローするユーティリティ
 async function graphVoid(accessToken: string, path: string, init?: RequestInit): Promise<void> {
