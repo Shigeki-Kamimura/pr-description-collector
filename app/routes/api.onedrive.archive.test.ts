@@ -138,7 +138,7 @@ describe("api.onedrive.archive action", () => {
       webUrl: "https://example.com/imgs/a.png",
       status: "success",
     });
-    expect(body.evidenceImages[0].imageAccessToken).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.evidenceImages[0].imageAccessToken).toMatch(/^[0-9a-f]{64}:[0-9]{10,16}$/);
   });
 
   it("OneDrive認証エラー時は内部詳細を露出せず定型メッセージを返す", async () => {

@@ -424,7 +424,7 @@ describe("api.onedrive.upload action", () => {
       status: "success",
       webUrl: "https://example.com/a-from-onedrive.png",
     });
-    expect(body.evidenceImageRecords[0].imageAccessToken).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.evidenceImageRecords[0].imageAccessToken).toMatch(/^[0-9a-f]{64}:[0-9]{10,16}$/);
   });
 
   it("既存archive読取でOneDrive認証エラーが発生した場合は保存を中止して401を返す", async () => {
