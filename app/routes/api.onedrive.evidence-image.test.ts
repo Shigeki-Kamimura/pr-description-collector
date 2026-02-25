@@ -144,16 +144,20 @@ describe("api.onedrive.evidence-image loader", () => {
 
     const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/a.png");
     const response = await loader({ request } as never);
+    const body = await response.text();
 
     expect(response.status).toBe(401);
+    expect(body).toBe("onedrive auth required");
   });
 
   it("権限不足は 403 を返す", async () => {
     onedrive.getBinary.mockRejectedValue(new OneDriveApiError("forbidden", 403, "accessDenied"));
     const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/a.png");
     const response = await loader({ request } as never);
+    const body = await response.text();
 
     expect(response.status).toBe(403);
+    expect(body).toBe("onedrive access denied");
   });
 
   it("非画像 content-type は 415 を返す", async () => {

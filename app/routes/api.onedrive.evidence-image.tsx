@@ -110,10 +110,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     if (isAuthLike) {
       const parsed = extractOneDriveError(rawMessage);
       const status = parsed.code === "accessDenied" ? 403 : 401;
-      const message = parsed.code
-        ? `${parsed.code}: ${parsed.message ?? rawMessage}`
-        : "OneDrive auth required";
-      return textResponse(status, message);
+      return textResponse(status, status === 403 ? "onedrive access denied" : "onedrive auth required");
     }
 
     return textResponse(502, "failed to fetch evidence image");

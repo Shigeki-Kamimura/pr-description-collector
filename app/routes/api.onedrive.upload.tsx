@@ -405,11 +405,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const parsed = extractOneDriveError(rawMessage);
     const isAuthLike = isOneDriveAuthLikeError(rawMessage); // エラーメッセージの解析結果が認証エラーっぽいかどうか。これが true の場合は 401、そうでない場合は 502 として返す。
-    const hasDetail = Boolean(parsed.code || parsed.message); // 解析結果にエラーコードや詳細メッセージが含まれているかどうか。これが true の場合は、認証エラーっぽい場合でも詳細を含むメッセージを返す。そうでない場合は、認証エラーっぽくても定型の再認証メッセージを返す。
     const message = isAuthLike
-      ? hasDetail
-        ? `${parsed.code ?? "UNKNOWN"}: ${parsed.message ?? rawMessage}`
-        : "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
+      ? "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
       : "OneDrive への保存に失敗しました。しばらくしてから再実行してください。";
     // 認証エラーっぽい場合でも、エラーコードや詳細メッセージがない場合は定型の再認証メッセージを返す。これにより、OneDrive API のエラーレスポンスの形式が変わったり、予期しないエラーが発生した場合でも、ユーザーには再認証が必要な可能性があることを伝えることができる。
     if (!isAuthLike) {
@@ -425,8 +422,8 @@ export async function action({ request }: ActionFunctionArgs) {
         ok: false,
         error: message,
         isAuthError: status === 401,
-        errorCode: isAuthLike ? parsed.code : undefined,
-        errorMessage: isAuthLike ? parsed.message ?? rawMessage : undefined,
+        errorCode: undefined,
+        errorMessage: undefined,
       } satisfies ApiOneDriveUploadResponse,
       { status },
     );

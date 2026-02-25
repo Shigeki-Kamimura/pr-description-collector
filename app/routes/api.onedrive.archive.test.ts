@@ -140,4 +140,26 @@ describe("api.onedrive.archive action", () => {
     });
     expect(body.evidenceImages[0].imageAccessToken).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  it("OneDrive認証エラー時は内部詳細を露出せず定型メッセージを返す", async () => {
+    onedrive.getDriveInfo.mockRejectedValue(
+      new Error("OneDrive API error (401) [code=InvalidAuthenticationToken]: token expired"),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+      errorMessage?: string;
+    };
+
+    expect(response.status).toBe(401);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(true);
+    expect(body.error).toBe("OneDrive 認証が切れています。再認証してから再実行してください。");
+    expect(body.errorCode).toBeUndefined();
+    expect(body.errorMessage).toBeUndefined();
+  });
 });

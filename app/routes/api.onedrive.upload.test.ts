@@ -246,12 +246,20 @@ describe("api.onedrive.upload action", () => {
     );
 
     const response = await action({ request: buildRequest() } as never);
-    const body = (await response.json()) as { ok: false; isAuthError: boolean; error: string };
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+      errorCode?: string;
+      errorMessage?: string;
+    };
 
     expect(response.status).toBe(401);
     expect(body.ok).toBe(false);
     expect(body.isAuthError).toBe(true);
-    expect(body.error).toContain("InvalidAuthenticationToken");
+    expect(body.error).toBe("OneDrive 認証が切れています。再認証してから保存をやり直してください。");
+    expect(body.errorCode).toBeUndefined();
+    expect(body.errorMessage).toBeUndefined();
   });
 
   it("OneDrive非認証エラーは内部詳細を露出せず定型メッセージで返す", async () => {

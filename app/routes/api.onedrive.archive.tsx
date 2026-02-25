@@ -172,13 +172,9 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const rawMessage = error instanceof Error ? error.message : String(error);
-    const parsed = extractOneDriveError(rawMessage);
     const isAuthLike = isOneDriveAuthLikeError(rawMessage);
-    const hasDetail = Boolean(parsed.code || parsed.message);
     const message = isAuthLike
-      ? hasDetail
-        ? `${parsed.code ?? "UNKNOWN"}: ${parsed.message ?? rawMessage}`
-        : "OneDrive 認証が切れています。再認証してから再実行してください。"
+      ? "OneDrive 認証が切れています。再認証してから再実行してください。"
       : "OneDrive 上の archive.json 取得に失敗しました。しばらくしてから再実行してください。";
 
     return Response.json(
@@ -186,8 +182,8 @@ export async function action({ request }: ActionFunctionArgs) {
         ok: false,
         error: message,
         isAuthError: isAuthLike,
-        errorCode: isAuthLike ? parsed.code : undefined,
-        errorMessage: isAuthLike ? parsed.message ?? rawMessage : undefined,
+        errorCode: undefined,
+        errorMessage: undefined,
       } satisfies ApiOneDriveArchiveResponse,
       { status: isAuthLike ? 401 : 502 },
     );
