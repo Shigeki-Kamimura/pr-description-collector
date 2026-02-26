@@ -231,6 +231,7 @@ export async function action({ request }: ActionFunctionArgs) {
       if (descriptionMd && !archiveJson) {
         rollbackAttempted = true;
         const savedEvidencePaths = collectSavedEvidencePaths(evidenceImages, writeError);
+        let canDeleteDescriptionMd = true;
         // description.md は保存されたがarchive.jsonの保存に失敗した場合、description.mdとevidenceImagesで保存された画像を削除するロールバックを試みる。
         if (savedEvidencePaths.length > 0) {
           let evidenceDeleteSuccessCount = 0;
@@ -257,6 +258,11 @@ export async function action({ request }: ActionFunctionArgs) {
           } else {
             rollbackEvidenceCleanup = `failed (${lastEvidenceDeleteFailureReason})`;
           }
+          if (evidenceDeleteFailureCount > 0) {
+            // 画像cleanupが一部でも失敗した場合は、description.md を残して追跡可能性を優先する。
+            canDeleteDescriptionMd = false;
+            rollbackFailureReason = "evidence-cleanup-incomplete";
+          }
           try {
             await onedrive.deleteItem(`${folderPath}/imgs`);
           } catch (imagesFolderCleanupError) {
@@ -270,25 +276,29 @@ export async function action({ request }: ActionFunctionArgs) {
             });
           }
         }
-        try {
-          await onedrive.deleteItem(descriptionPath);
-          rollbackSucceeded = true;
-          // description.md の削除後、空フォルダが残らないようにフォルダ削除も試みる。
+        if (canDeleteDescriptionMd) {
           try {
-            await onedrive.deleteItem(folderPath);
-            rollbackFolderCleanup = "ok";
-          } catch (folderCleanupError) {
-            const reason = folderCleanupError instanceof Error ? folderCleanupError.message : String(folderCleanupError);
-            rollbackFolderCleanup = `failed (${reason.trim() || "unknown"})`;
-            console.warn("OneDrive rollback folder cleanup skipped.", {
-              folderPath,
-              reason,
-            });
+            await onedrive.deleteItem(descriptionPath);
+            rollbackSucceeded = true;
+            // description.md の削除後、空フォルダが残らないようにフォルダ削除も試みる。
+            try {
+              await onedrive.deleteItem(folderPath);
+              rollbackFolderCleanup = "ok";
+            } catch (folderCleanupError) {
+              const reason = folderCleanupError instanceof Error ? folderCleanupError.message : String(folderCleanupError);
+              rollbackFolderCleanup = `failed (${reason.trim() || "unknown"})`;
+              console.warn("OneDrive rollback folder cleanup skipped.", {
+                folderPath,
+                reason,
+              });
+            }
+          } catch (rollbackError) {
+            rollbackSucceeded = false;
+            const reason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+            rollbackFailureReason = reason.trim() || "unknown";
           }
-        } catch (rollbackError) {
+        } else {
           rollbackSucceeded = false;
-          const reason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-          rollbackFailureReason = reason.trim() || "unknown";
         }
       }
 

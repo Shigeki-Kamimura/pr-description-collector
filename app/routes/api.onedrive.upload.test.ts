@@ -234,8 +234,12 @@ describe("api.onedrive.upload action", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       "OneDrive upload failed.",
       expect.objectContaining({
-        message: expect.stringContaining("evidenceCleanup=partial"),
+        message: expect.stringContaining("rollback=failed (evidence-cleanup-incomplete)"),
       }),
+    );
+    const deletedPaths = onedrive.deleteItem.mock.calls.map((args) => args[0] as string);
+    expect(deletedPaths).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("/PullRequests/PR123-Test-PR/description.md")]),
     );
     errorSpy.mockRestore();
   });
