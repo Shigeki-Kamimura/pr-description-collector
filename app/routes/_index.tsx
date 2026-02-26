@@ -346,6 +346,8 @@ export default function Index() {
   }, []);
 
   const effectiveError = (uploadError && uploadError !== INVALID_PR_REF_ERROR ? uploadError : null) ?? sessionStatusError;
+  const effectiveErrorCode =
+    uploadFetcher.data && !uploadFetcher.data.ok ? uploadFetcher.data.errorCode : undefined;
   const isAuthError =
     (uploadFetcher.data && !uploadFetcher.data.ok && uploadFetcher.data.isAuthError) ||
     (sessionStatusFetcher.data &&
@@ -783,6 +785,7 @@ export default function Index() {
           primaryImageErrorKeyRef.current = null;
         }}
         error={dialogErrorMessage}
+        errorCode={effectiveErrorCode}
         isAuthError={isAuthError}
         errorContext={dialogErrorContext}
       />

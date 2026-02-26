@@ -467,12 +467,20 @@ describe("api.onedrive.upload action", () => {
     onedrive.getText.mockResolvedValue("{invalid-json");
 
     const response = await action({ request: buildRequest() } as never);
-    const body = (await response.json()) as { ok: false; isAuthError: boolean; error: string };
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+      errorCode?: string;
+    };
 
     expect(response.status).toBe(502);
     expect(body.ok).toBe(false);
     expect(body.isAuthError).toBe(false);
-    expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
+    expect(body.error).toBe(
+      "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから再取得してください。",
+    );
+    expect(body.errorCode).toBe("ARCHIVE_JSON_INVALID");
     expect(onedrive.saveBinary).not.toHaveBeenCalled();
     expect(onedrive.saveText).not.toHaveBeenCalled();
   });

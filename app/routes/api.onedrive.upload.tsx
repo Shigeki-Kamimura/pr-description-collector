@@ -89,6 +89,7 @@ const ONEDRIVE_SAVE_FAILED_REASON = "ONEDRIVE_SAVE_FAILED";
 const ONEDRIVE_SAVE_SKIPPED_REASON = "ONEDRIVE_SAVE_SKIPPED_AFTER_CONSECUTIVE_FAILURE";
 const IMAGE_LIMIT_EXCEEDED_REMAINING_REASON = "IMAGE_LIMIT_EXCEEDED_REMAINING";
 const ALREADY_SAVED_REASON = "ALREADY_SAVED";
+const ARCHIVE_JSON_INVALID_ERROR_CODE = "ARCHIVE_JSON_INVALID";
 
 /*
 / 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
@@ -102,6 +103,16 @@ class EvidenceImagesSaveError extends Error {
     super(message);
     this.name = "EvidenceImagesSaveError";
     this.savedImagePaths = savedImagePaths;
+  }
+}
+
+class ArchiveJsonInvalidError extends Error {
+  readonly errorCode: string;
+
+  constructor() {
+    super("Existing archive.json is invalid.");
+    this.name = "ArchiveJsonInvalidError";
+    this.errorCode = ARCHIVE_JSON_INVALID_ERROR_CODE;
   }
 }
 
@@ -416,6 +427,19 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const parsed = extractOneDriveError(rawMessage);
     const isAuthLike = isOneDriveAuthLikeError(rawMessage); // エラーメッセージの解析結果が認証エラーっぽいかどうか。これが true の場合は 401、そうでない場合は 502 として返す。
+    if (error instanceof ArchiveJsonInvalidError) {
+      return Response.json(
+        {
+          ok: false,
+          error:
+            "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから再取得してください。",
+          isAuthError: false,
+          errorCode: error.errorCode,
+          errorMessage: undefined,
+        } satisfies ApiOneDriveUploadResponse,
+        { status: 502 },
+      );
+    }
     const message = isAuthLike
       ? "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
       : "OneDrive への保存に失敗しました。しばらくしてから再実行してください。";
@@ -815,7 +839,7 @@ async function loadExistingEvidenceBySource(
   try {
     if (!archiveJsonAlreadySaved) return result;
     const raw = await onedrive.getText(archivePath);
-    const parsed = JSON.parse(raw) as {
+    let parsed: {
       evidenceImages?: Array<{
         sourceUrl?: string;
         status?: string;
@@ -824,6 +848,19 @@ async function loadExistingEvidenceBySource(
         webUrl?: string | null;
       }>;
     };
+    try {
+      parsed = JSON.parse(raw) as {
+        evidenceImages?: Array<{
+          sourceUrl?: string;
+          status?: string;
+          fileName?: string | null;
+          onedrivePath?: string | null;
+          webUrl?: string | null;
+        }>;
+      };
+    } catch {
+      throw new ArchiveJsonInvalidError();
+    }
     for (const record of parsed.evidenceImages ?? []) {
       if (record.status !== "success" || !record.sourceUrl) continue;
       if (!record.onedrivePath) continue;
