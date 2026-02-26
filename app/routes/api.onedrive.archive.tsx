@@ -43,6 +43,18 @@ export type ApiOneDriveArchiveResponse =
       errorMessage?: string;
     };
 
+const ARCHIVE_JSON_INVALID_ERROR_CODE = "ARCHIVE_JSON_INVALID";
+// archive.json の内容が不正なときに投げるエラー。クライアント側での識別用。
+class ArchiveJsonInvalidError extends Error {
+  readonly errorCode: string;
+
+  constructor() {
+    super("Existing archive.json is invalid.");
+    this.name = "ArchiveJsonInvalidError";
+    this.errorCode = ARCHIVE_JSON_INVALID_ERROR_CODE;
+  }
+}
+
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const validation = validatePrRefInput(formData);
@@ -95,7 +107,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const raw = await onedrive.getText(archivePath);
-    const parsed = JSON.parse(raw) as {
+    let parsed: {
       evidenceImages?: Array<{
         sourceUrl?: string;
         status?: string;
@@ -105,6 +117,20 @@ export async function action({ request }: ActionFunctionArgs) {
         errorReason?: string | null;
       }>;
     };
+    try {
+      parsed = JSON.parse(raw) as {
+        evidenceImages?: Array<{
+          sourceUrl?: string;
+          status?: string;
+          fileName?: string | null;
+          onedrivePath?: string | null;
+          webUrl?: string | null;
+          errorReason?: string | null;
+        }>;
+      };
+    } catch {
+      throw new ArchiveJsonInvalidError();
+    }
     const evidenceImages: ArchiveEvidenceImage[] = [];
     for (const record of parsed.evidenceImages ?? []) {
       const sourceUrl = (record.sourceUrl ?? "").trim();
@@ -173,6 +199,19 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const rawMessage = error instanceof Error ? error.message : String(error);
+    if (error instanceof ArchiveJsonInvalidError) {
+      return Response.json(
+        {
+          ok: false,
+          error:
+            "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから再取得してください。",
+          isAuthError: false,
+          errorCode: error.errorCode,
+          errorMessage: undefined,
+        } satisfies ApiOneDriveArchiveResponse,
+        { status: 502 },
+      );
+    }
     const isAuthLike = isOneDriveAuthLikeError(rawMessage);
     const message = isAuthLike
       ? "OneDrive 認証が切れています。再認証してから再実行してください。"

@@ -162,4 +162,27 @@ describe("api.onedrive.archive action", () => {
     expect(body.errorCode).toBeUndefined();
     expect(body.errorMessage).toBeUndefined();
   });
+
+  it("archive.json が不正JSONの場合は専用メッセージとエラーコードで502を返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+    onedrive.getText.mockResolvedValueOnce("{invalid-json");
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+      errorMessage?: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe(
+      "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから再取得してください。",
+    );
+    expect(body.errorCode).toBe("ARCHIVE_JSON_INVALID");
+    expect(body.errorMessage).toBeUndefined();
+  });
 });
