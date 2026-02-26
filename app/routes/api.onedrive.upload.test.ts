@@ -543,6 +543,61 @@ describe("api.onedrive.upload action", () => {
     });
   });
 
+  it("既存archive画像の存在確認でOneDriveエラーが発生した場合は保存を中止して502を返す", async () => {
+    github.getPullRequest.mockResolvedValueOnce({
+      number: 123,
+      title: "Test PR",
+      url: "https://github.com/octocat/hello-world/pull/123",
+      body: "![a](https://example.com/a.png)\n![b](https://example.com/b.png)",
+      authorLogin: "author",
+      mergedByLogin: "merger",
+    });
+    vi.mocked(extractUniqueImageUrls).mockReturnValue([
+      "https://example.com/a.png",
+      "https://example.com/b.png",
+    ]);
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive" };
+      }
+      if (path.endsWith("/imgs/a.png")) {
+        throw new OneDriveApiError("OneDrive API error (429) [code=activityLimitReached]", 429, "activityLimitReached");
+      }
+      if (path.endsWith("/imgs/b.png")) {
+        return { name: "b.png", webUrl: "https://example.com/b.png" };
+      }
+      return null;
+    });
+    onedrive.getText.mockResolvedValue(
+      JSON.stringify({
+        evidenceImages: [
+          {
+            sourceUrl: "https://example.com/a.png",
+            status: "success",
+            fileName: "a.png",
+            onedrivePath: "project/hello-world/PullRequests/PR123-Test-PR/imgs/a.png",
+          },
+          {
+            sourceUrl: "https://example.com/b.png",
+            status: "success",
+            fileName: "b.png",
+            onedrivePath: "project/hello-world/PullRequests/PR123-Test-PR/imgs/b.png",
+          },
+        ],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: false; isAuthError: boolean; error: string };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe("OneDrive への保存に失敗しました。しばらくしてから再実行してください。");
+    expect(onedrive.saveBinary).not.toHaveBeenCalled();
+    expect(onedrive.saveText).not.toHaveBeenCalled();
+  });
+
   it("画像URLが重複しても1回だけ保存し evidenceImages に1件記録する", async () => {
     github.getPullRequest.mockResolvedValueOnce({
       number: 123,

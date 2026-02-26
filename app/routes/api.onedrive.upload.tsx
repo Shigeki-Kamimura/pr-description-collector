@@ -830,13 +830,29 @@ async function loadExistingEvidenceBySource(
     } catch {
       throw new ArchiveJsonInvalidError();
     }
-    for (const record of parsed.evidenceImages ?? []) {
-      if (record.status !== "success" || !record.sourceUrl) continue;
-      if (!record.onedrivePath) continue;
-      let webUrl = record.webUrl ?? null;
-      const savedItem = await onedrive.getItem(record.onedrivePath);
+    const candidateRecords = (parsed.evidenceImages ?? []).filter(
+      (record): record is { sourceUrl: string; status?: string; fileName?: string | null; onedrivePath: string; webUrl?: string | null } =>
+        record.status === "success" &&
+        typeof record.sourceUrl === "string" &&
+        record.sourceUrl.trim().length > 0 &&
+        typeof record.onedrivePath === "string" &&
+        record.onedrivePath.trim().length > 0,
+    );
+    const itemResults = await Promise.allSettled(
+      candidateRecords.map((record) => onedrive.getItem(record.onedrivePath)),
+    );
+    for (const settled of itemResults) {
+      if (settled.status === "rejected") {
+        throw settled.reason;
+      }
+    }
+    for (let index = 0; index < candidateRecords.length; index += 1) {
+      const record = candidateRecords[index];
+      const settled = itemResults[index];
+      if (settled.status !== "fulfilled") continue;
+      const savedItem = settled.value;
       if (!savedItem) continue;
-      if (!webUrl) webUrl = savedItem.webUrl;
+      const webUrl = record.webUrl ?? savedItem.webUrl;
       result.set(normalizeEvidenceSourceUrl(record.sourceUrl), {
         fileName: record.fileName ?? null,
         onedrivePath: record.onedrivePath,
