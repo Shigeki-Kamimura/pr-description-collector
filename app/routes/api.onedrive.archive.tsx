@@ -16,6 +16,7 @@ import { validatePrRefInput } from "../services/validation";
 import { verifyCsrfToken } from "../services/csrf.server";
 import { normalizeEvidenceSourceUrl } from "../services/evidence-url";
 import { signEvidenceImagePath } from "../services/evidence-image-token.server";
+import { slugifyForPath } from "../services/path-utils";
 
 type ArchiveEvidenceImage = {
   sourceUrl: string;
@@ -188,31 +189,4 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: isAuthLike ? 401 : 502 },
     );
   }
-}
-
-function slugifyForPath(value: string): string {
-  const normalized = value
-    .normalize("NFC")
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^[-.\s]+|[-.\s]+$/g, "");
-
-  const maxCodePoints = 80;
-  const maxUtf8Bytes = 160;
-  const encoder = new TextEncoder();
-  let result = "";
-  let codePointCount = 0;
-  let utf8ByteCount = 0;
-
-  for (const char of normalized) {
-    const charBytes = encoder.encode(char).length;
-    if (codePointCount + 1 > maxCodePoints || utf8ByteCount + charBytes > maxUtf8Bytes) break;
-    result += char;
-    codePointCount += 1;
-    utf8ByteCount += charBytes;
-  }
-
-  return result;
 }
