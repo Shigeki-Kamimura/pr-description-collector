@@ -16,7 +16,7 @@ import {
 import { getHttpStatus } from "../services/http-status";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
-// CSRFトークンの検証ユーティリティ
+// 画像保存ユーティリティ
 import {
   buildImageBaseName,
   downloadImageWithRetry,
