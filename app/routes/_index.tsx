@@ -313,6 +313,11 @@ export default function Index() {
       ? sessionStatusFetcher.data.error
       : null;
   }, [sessionStatusFetcher.data]);
+  const archiveError = useMemo(() => {
+    return archiveFetcher.data && !archiveFetcher.data.ok
+      ? archiveFetcher.data.error
+      : null;
+  }, [archiveFetcher.data]);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const onedriveConnected = searchParams.get("onedrive") === "connected";
@@ -345,14 +350,21 @@ export default function Index() {
     window.sessionStorage.removeItem(FETCHER_TRANSPORT_ERROR_KEY);
   }, []);
 
-  const effectiveError = (uploadError && uploadError !== INVALID_PR_REF_ERROR ? uploadError : null) ?? sessionStatusError;
+  const effectiveError =
+    (uploadError && uploadError !== INVALID_PR_REF_ERROR ? uploadError : null) ??
+    sessionStatusError ??
+    archiveError;
   const effectiveErrorCode =
-    uploadFetcher.data && !uploadFetcher.data.ok ? uploadFetcher.data.errorCode : undefined;
+    (uploadFetcher.data && !uploadFetcher.data.ok ? uploadFetcher.data.errorCode : undefined) ??
+    (archiveFetcher.data && !archiveFetcher.data.ok ? archiveFetcher.data.errorCode : undefined);
   const isAuthError =
     (uploadFetcher.data && !uploadFetcher.data.ok && uploadFetcher.data.isAuthError) ||
     (sessionStatusFetcher.data &&
       !sessionStatusFetcher.data.ok &&
       sessionStatusFetcher.data.isAuthError) ||
+    (archiveFetcher.data &&
+      !archiveFetcher.data.ok &&
+      archiveFetcher.data.isAuthError) ||
     primaryImageErrorDialog?.isAuthError ||
     false;
   const dialogErrorMessage = transportError ?? effectiveError ?? primaryImageErrorDialog?.message ?? "";

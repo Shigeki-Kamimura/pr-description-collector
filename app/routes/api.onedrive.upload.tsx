@@ -91,6 +91,7 @@ const ONEDRIVE_SAVE_SKIPPED_REASON = "ONEDRIVE_SAVE_SKIPPED_AFTER_CONSECUTIVE_FA
 const IMAGE_LIMIT_EXCEEDED_REMAINING_REASON = "IMAGE_LIMIT_EXCEEDED_REMAINING";
 const ALREADY_SAVED_REASON = "ALREADY_SAVED";
 const ARCHIVE_JSON_INVALID_ERROR_CODE = "ARCHIVE_JSON_INVALID";
+const EXISTING_EVIDENCE_LOOKUP_CONCURRENCY = 4;
 
 /*
 / 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
@@ -838,8 +839,10 @@ async function loadExistingEvidenceBySource(
         typeof record.onedrivePath === "string" &&
         record.onedrivePath.trim().length > 0,
     );
-    const itemResults = await Promise.allSettled(
-      candidateRecords.map((record) => onedrive.getItem(record.onedrivePath)),
+    const itemResults = await mapWithConcurrencyLimit(
+      candidateRecords,
+      EXISTING_EVIDENCE_LOOKUP_CONCURRENCY,
+      async (record) => onedrive.getItem(record.onedrivePath),
     );
     for (const settled of itemResults) {
       if (settled.status === "rejected") {
@@ -866,4 +869,32 @@ async function loadExistingEvidenceBySource(
     }
     throw error;
   }
+}
+
+async function mapWithConcurrencyLimit<T, U>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<U>,
+): Promise<Array<PromiseSettledResult<U>>> {
+  if (items.length === 0) return [];
+  const results: Array<PromiseSettledResult<U>> = new Array(items.length);
+  const limit = Math.max(1, Math.floor(concurrency));
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      try {
+        const value = await worker(items[currentIndex], currentIndex);
+        results[currentIndex] = { status: "fulfilled", value };
+      } catch (reason) {
+        results[currentIndex] = { status: "rejected", reason };
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => runWorker());
+  await Promise.all(workers);
+  return results;
 }
