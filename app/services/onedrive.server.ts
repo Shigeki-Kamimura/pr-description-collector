@@ -7,6 +7,7 @@
  */
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
+const DEFAULT_GET_BINARY_MAX_BYTES = 20 * 1024 * 1024;
 
 export type OneDriveAuth = {
   /** Microsoft Entra ID (旧AAD) / MSAL経由のアクセストークン */
@@ -46,6 +47,8 @@ export interface OneDriveService {
   saveBinary(path: string, content: Uint8Array, contentType?: string): Promise<DriveItem>;
   /** テキストを取得 */
   getText(path: string): Promise<string>;
+  /** バイナリを取得 */
+  getBinary(path: string): Promise<{ bytes: Uint8Array; contentType: string | null }>;
   /** 指定パスのアイテム情報を取得（未存在時は null） */
   getItem(path: string): Promise<DriveItem | null>;
   /** 指定パスのファイル/フォルダを削除 */
@@ -96,12 +99,25 @@ type GraphDrive = {
 export class OneDriveApiError extends Error {
   status: number;
   code?: string;
+  retryAfterSeconds?: number;
+  retryAfterRaw?: string;
+  retryAfterAtIso?: string;
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    retryAfterSeconds?: number,
+    retryAfterRaw?: string,
+    retryAfterAtIso?: string,
+  ) {
     super(message);
     this.name = "OneDriveApiError";
     this.status = status;
     this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
+    this.retryAfterRaw = retryAfterRaw;
+    this.retryAfterAtIso = retryAfterAtIso;
   }
 }
 // Graph APIのエラーレスポンスを解析して、OneDriveApiErrorを構築するユーティリティ関数。
@@ -111,6 +127,19 @@ function buildOneDriveApiError(response: Response, responseText: string): OneDri
   let errorCode = "";
   let errorMessage = "";
   let requestMeta = "";
+  const retryAfterRaw = response.headers.get("retry-after")?.trim() || undefined;
+  let retryAfterSeconds: number | undefined;
+  let retryAfterAtIso: string | undefined;
+  if (retryAfterRaw) {
+    if (/^\d+$/.test(retryAfterRaw)) {
+      retryAfterSeconds = Number.parseInt(retryAfterRaw, 10);
+    } else {
+      const retryAfterDateMs = Date.parse(retryAfterRaw);
+      if (Number.isFinite(retryAfterDateMs)) {
+        retryAfterAtIso = new Date(retryAfterDateMs).toISOString();
+      }
+    }
+  }
   try {
     // Graph APIのエラー形式を解析して、エラーコードやメッセージ、リクエストIDなどの情報を抽出する。
     const json = JSON.parse(responseText) as GraphErrorResponse;
@@ -142,6 +171,9 @@ function buildOneDriveApiError(response: Response, responseText: string): OneDri
     `OneDrive API error (${response.status})${codePart}${details}${requestMeta}`,
     response.status,
     errorCode || undefined,
+    retryAfterSeconds,
+    retryAfterRaw,
+    retryAfterAtIso,
   );
 }
 
@@ -207,7 +239,97 @@ async function graphText(accessToken: string, path: string, init?: RequestInit):
   }
   return await response.text();
 }
+// Graph APIを呼び出してバイナリレスポンスを取得するユーティリティ
+async function graphBytes(
+  accessToken: string,
+  path: string,
+  init?: RequestInit,
+): Promise<{ bytes: Uint8Array; contentType: string | null }> {
+  const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(init?.headers ?? {}),
+    },
+  });
 
+  if (!response.ok) {
+    throw buildOneDriveApiError(response, await response.text());
+  }
+
+  const maxBytes = resolveGetBinaryMaxBytes();
+  const declaredLength = parseContentLength(response.headers.get("content-length"));
+  if (declaredLength !== null && declaredLength > maxBytes) {
+    throw new OneDriveApiError(
+      `OneDrive binary too large (content-length=${declaredLength}, max=${maxBytes})`,
+      413,
+      "payloadTooLarge",
+    );
+  }
+
+  const bytes = await readResponseBytesWithLimit(response, maxBytes);
+  const contentType = response.headers.get("content-type");
+  return { bytes, contentType };
+}
+// OneDrive APIからのバイナリレスポンスを、サイズ制限を超えないように読み取るユーティリティ
+function resolveGetBinaryMaxBytes(): number {
+  const raw = process.env.ONEDRIVE_GET_BINARY_MAX_BYTES;
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_GET_BINARY_MAX_BYTES;
+  }
+  return parsed;
+}
+// OneDrive APIからのバイナリレスポンスを、サイズ制限を超えないように読み取るユーティリティ
+function parseContentLength(rawValue: string | null): number | null {
+  if (!rawValue) return null;
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+// OneDrive APIからのバイナリレスポンスを、サイズ制限を超えないように読み取るユーティリティ
+async function readResponseBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (!response.body) {
+    const fallbackBytes = new Uint8Array(await response.arrayBuffer());
+    if (fallbackBytes.byteLength > maxBytes) {
+      throw new OneDriveApiError(
+        `OneDrive binary too large (size=${fallbackBytes.byteLength}, max=${maxBytes})`,
+        413,
+        "payloadTooLarge",
+      );
+    }
+    return fallbackBytes;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value || value.byteLength === 0) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new OneDriveApiError(
+        `OneDrive binary too large (size=${total}, max=${maxBytes})`,
+        413,
+        "payloadTooLarge",
+      );
+    }
+    chunks.push(value);
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
+}
+// Graph APIを呼び出して、成功時はレスポンスを無視し、失敗時はエラーをスローするユーティリティ
 async function graphVoid(accessToken: string, path: string, init?: RequestInit): Promise<void> {
   const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
     ...init,
@@ -379,6 +501,15 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
       const encoded = encodeDrivePath(normalized);
       // コンテンツ取得
       return await graphText(auth.accessToken, `/me/drive/root:/${encoded}:/content`, {
+        method: "GET",
+      });
+    },
+    // バイナリ取得ユーティリティ
+    async getBinary(path: string): Promise<{ bytes: Uint8Array; contentType: string | null }> {
+      const normalized = normalizeDrivePath(path);
+      if (!normalized) throw new Error("OneDrive getBinary: path is empty");
+      const encoded = encodeDrivePath(normalized);
+      return await graphBytes(auth.accessToken, `/me/drive/root:/${encoded}:/content`, {
         method: "GET",
       });
     },

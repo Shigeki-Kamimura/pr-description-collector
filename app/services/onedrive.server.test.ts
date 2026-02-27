@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOneDriveService } from "./onedrive.server";
 
 describe("onedrive service error handling", () => {
+  const originalGetBinaryMaxBytes = process.env.ONEDRIVE_GET_BINARY_MAX_BYTES;
+
   afterEach(() => {
+    if (originalGetBinaryMaxBytes === undefined) {
+      delete process.env.ONEDRIVE_GET_BINARY_MAX_BYTES;
+    } else {
+      process.env.ONEDRIVE_GET_BINARY_MAX_BYTES = originalGetBinaryMaxBytes;
+    }
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -47,6 +54,115 @@ describe("onedrive service error handling", () => {
       name: "OneDriveApiError",
       status: 404,
       code: "itemNotFound",
+    });
+  });
+
+  it("getBinary は content-type と bytes を返す", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([7, 8, 9]), {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    const result = await service.getBinary("evidence/image.png");
+    expect(result.contentType).toContain("image/png");
+    expect(Array.from(result.bytes)).toEqual([7, 8, 9]);
+  });
+
+  it("getBinary の 429 は retryAfterSeconds を保持する", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "activityLimitReached", message: "throttled" },
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": "12",
+          },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(service.getBinary("evidence/image.png")).rejects.toMatchObject({
+      name: "OneDriveApiError",
+      status: 429,
+      retryAfterSeconds: 12,
+      retryAfterRaw: "12",
+    });
+  });
+
+  it("getBinary の 429 は Retry-After 日時形式も保持する", async () => {
+    const retryAfterDate = "Wed, 21 Oct 2026 07:28:00 GMT";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "activityLimitReached", message: "throttled" },
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": retryAfterDate,
+          },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(service.getBinary("evidence/image.png")).rejects.toMatchObject({
+      name: "OneDriveApiError",
+      status: 429,
+      retryAfterRaw: retryAfterDate,
+      retryAfterAtIso: "2026-10-21T07:28:00.000Z",
+    });
+  });
+
+  it("getBinary は content-length が上限超過の場合に 413 を返す", async () => {
+    process.env.ONEDRIVE_GET_BINARY_MAX_BYTES = "4";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4, 5]), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+          "Content-Length": "5",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(service.getBinary("evidence/large.png")).rejects.toMatchObject({
+      name: "OneDriveApiError",
+      status: 413,
+      code: "payloadTooLarge",
+    });
+  });
+
+  it("getBinary は content-length 未設定でも実サイズ超過時に 413 を返す", async () => {
+    process.env.ONEDRIVE_GET_BINARY_MAX_BYTES = "4";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4, 5]), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(service.getBinary("evidence/large.png")).rejects.toMatchObject({
+      name: "OneDriveApiError",
+      status: 413,
+      code: "payloadTooLarge",
     });
   });
 

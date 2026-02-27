@@ -15,10 +15,19 @@ type SaveErrorDialogProps = {
   open: boolean; // ダイアログ表示フラグ
   onClose: () => void; // ダイアログ閉じるコールバック
   error: string; // エラーメッセージ
+  errorCode?: string; // エラーコード
   isAuthError: boolean; // 認証エラーかどうか
+  errorContext?: "save" | "image"; // エラー文脈
 };
 
-export function SaveErrorDialog({ open, onClose, error, isAuthError }: SaveErrorDialogProps) {
+export function SaveErrorDialog({
+  open,
+  onClose,
+  error,
+  errorCode,
+  isAuthError,
+  errorContext = "save",
+}: SaveErrorDialogProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
 
   useEffect(() => {
@@ -33,17 +42,31 @@ export function SaveErrorDialog({ open, onClose, error, isAuthError }: SaveError
 
   if (!error) return null;
 
-  const formattedPartialWriteError = !isAuthError
+  const isImageContext = errorContext === "image";
+  const isArchiveJsonInvalid = errorCode === "ARCHIVE_JSON_INVALID";
+  const formattedPartialWriteError = !isAuthError && !isImageContext
     ? formatPartialWriteErrorMessage(error)
     : null;
-  const title = isAuthError
-    ? "OneDrive の再認証が必要です"
-    : formattedPartialWriteError
-      ? "保存に失敗しました（途中まで保存）"
-      : "保存に失敗しました";
-  const message = isAuthError
-    ? `${error}\n再認証してから保存をやり直してください。解決しない場合は管理者にお問い合わせください。`
-    : (formattedPartialWriteError ?? error);
+  const title = isImageContext
+    ? isAuthError
+      ? "OneDrive の再認証が必要です"
+      : "画像表示に失敗しました"
+    : isAuthError
+      ? "OneDrive の再認証が必要です"
+      : isArchiveJsonInvalid
+        ? "archive.json を削除してください"
+      : formattedPartialWriteError
+        ? "保存に失敗しました（途中まで保存）"
+        : "保存に失敗しました";
+  const message = isImageContext
+    ? isAuthError
+      ? `${error}\n再認証してから画像表示を再試行してください。`
+      : error
+    : isAuthError
+      ? `${error}\n再認証してから保存をやり直してください。解決しない場合は管理者にお問い合わせください。`
+      : isArchiveJsonInvalid
+        ? "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから、Get Description (Fetch Only) と Save to OneDrive (with images) を再実行してください。"
+      : (formattedPartialWriteError ?? error);
 
   return (
     <dialog

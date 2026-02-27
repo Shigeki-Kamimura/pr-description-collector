@@ -16,7 +16,7 @@ import {
 import { getHttpStatus } from "../services/http-status";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
-// CSRFトークンの検証ユーティリティ
+// 画像保存ユーティリティ
 import {
   buildImageBaseName,
   downloadImageWithRetry,
@@ -24,7 +24,11 @@ import {
 } from "../services/evidence-images.server";
 import { parseChecklist } from "../services/checklist";
 import { verifyCsrfToken } from "../services/csrf.server";
+import { normalizeEvidenceSourceUrl } from "../services/evidence-url";
 import { validatePrRefInput } from "../services/validation";
+import { signEvidenceImagePath } from "../services/evidence-image-token.server";
+import { slugifyForPath } from "../services/path-utils";
+import { mapWithConcurrencyLimit } from "../services/concurrency";
 
 // ルートハンドラーとビジネスロジックを分離するため、OneDrive への保存処理の詳細は services/evidence-images.server.ts に委譲する。
 export type ApiOneDriveUploadResponse =
@@ -35,6 +39,20 @@ export type ApiOneDriveUploadResponse =
         total: number;
         success: number;
         failed: number;
+        alreadySaved: number;
+      };
+      evidenceImageRecords: Array<{
+        sourceUrl: string;
+        status: EvidenceImageStatus;
+        fileName: string | null;
+        onedrivePath: string | null;
+        imageAccessToken: string | null;
+        webUrl: string | null;
+        errorReason: string | null;
+      }>;
+      alreadySavedFiles: {
+        descriptionMd: boolean;
+        archiveJson: boolean;
       };
       uploaded: {
         descriptionMd: { name: string; webUrl: string };
@@ -60,6 +78,7 @@ type EvidenceImageRecord = {
   status: EvidenceImageStatus;
   fileName: string | null;
   onedrivePath: string | null;
+  webUrl: string | null;
   errorReason: string | null;
 };
 const DEFAULT_EVIDENCE_IMAGE_MAX_KB = 10 * 1024;
@@ -71,6 +90,9 @@ const MAX_SAVE_CONFLICT_RETRIES = 20;
 const ONEDRIVE_SAVE_FAILED_REASON = "ONEDRIVE_SAVE_FAILED";
 const ONEDRIVE_SAVE_SKIPPED_REASON = "ONEDRIVE_SAVE_SKIPPED_AFTER_CONSECUTIVE_FAILURE";
 const IMAGE_LIMIT_EXCEEDED_REMAINING_REASON = "IMAGE_LIMIT_EXCEEDED_REMAINING";
+const ALREADY_SAVED_REASON = "ALREADY_SAVED";
+const ARCHIVE_JSON_INVALID_ERROR_CODE = "ARCHIVE_JSON_INVALID";
+const EXISTING_EVIDENCE_LOOKUP_CONCURRENCY = 4;
 
 /*
 / 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
@@ -84,6 +106,16 @@ class EvidenceImagesSaveError extends Error {
     super(message);
     this.name = "EvidenceImagesSaveError";
     this.savedImagePaths = savedImagePaths;
+  }
+}
+
+class ArchiveJsonInvalidError extends Error {
+  readonly errorCode: string;
+
+  constructor() {
+    super("Existing archive.json is invalid.");
+    this.name = "ArchiveJsonInvalidError";
+    this.errorCode = ARCHIVE_JSON_INVALID_ERROR_CODE;
   }
 }
 
@@ -128,6 +160,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const currentUser = await onedrive.getCurrentUser();
     failureDomain = "internal";
     const checklist = parseChecklist(pullRequest.body);
+    failureDomain = "onedrive";
 
     const approvedReviews = reviews
       .filter((review) => review.state === "APPROVED" && review.submittedAt)
@@ -156,6 +189,13 @@ export async function action({ request }: ActionFunctionArgs) {
     const folderPath = `${rootPrefix}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
     const descriptionPath = `${folderPath}/description.md`;
     const archivePath = `${folderPath}/archive.json`;
+    const descriptionMdAlreadySaved = (await onedrive.getItem(descriptionPath)) !== null;
+    const archiveJsonAlreadySaved = (await onedrive.getItem(archivePath)) !== null;
+    const alreadySavedEvidenceBySource = await loadExistingEvidenceBySource(
+      onedrive,
+      archivePath,
+      archiveJsonAlreadySaved,
+    );
     // description.md と archive.json の両方を保存する。description.md の保存に成功してから archive.json の保存に失敗した場合は、description.md を削除するロールバックを試みる。
     let descriptionMd: { name: string; webUrl: string } | null = null;
     let archiveJson: { name: string; webUrl: string } | null = null;
@@ -174,6 +214,7 @@ export async function action({ request }: ActionFunctionArgs) {
         markdown: pullRequest.body,
         folderPath,
         onedrive,
+        alreadySavedEvidenceBySource,
       });
       archiveJson = await onedrive.saveText(
         archivePath,
@@ -204,6 +245,7 @@ export async function action({ request }: ActionFunctionArgs) {
       if (descriptionMd && !archiveJson) {
         rollbackAttempted = true;
         const savedEvidencePaths = collectSavedEvidencePaths(evidenceImages, writeError);
+        let canDeleteDescriptionMd = true;
         // description.md は保存されたがarchive.jsonの保存に失敗した場合、description.mdとevidenceImagesで保存された画像を削除するロールバックを試みる。
         if (savedEvidencePaths.length > 0) {
           let evidenceDeleteSuccessCount = 0;
@@ -230,6 +272,11 @@ export async function action({ request }: ActionFunctionArgs) {
           } else {
             rollbackEvidenceCleanup = `failed (${lastEvidenceDeleteFailureReason})`;
           }
+          if (evidenceDeleteFailureCount > 0) {
+            // 画像cleanupが一部でも失敗した場合は、description.md を残して追跡可能性を優先する。
+            canDeleteDescriptionMd = false;
+            rollbackFailureReason = "evidence-cleanup-incomplete";
+          }
           try {
             await onedrive.deleteItem(`${folderPath}/imgs`);
           } catch (imagesFolderCleanupError) {
@@ -243,25 +290,29 @@ export async function action({ request }: ActionFunctionArgs) {
             });
           }
         }
-        try {
-          await onedrive.deleteItem(descriptionPath);
-          rollbackSucceeded = true;
-          // description.md の削除後、空フォルダが残らないようにフォルダ削除も試みる。
+        if (canDeleteDescriptionMd) {
           try {
-            await onedrive.deleteItem(folderPath);
-            rollbackFolderCleanup = "ok";
-          } catch (folderCleanupError) {
-            const reason = folderCleanupError instanceof Error ? folderCleanupError.message : String(folderCleanupError);
-            rollbackFolderCleanup = `failed (${reason.trim() || "unknown"})`;
-            console.warn("OneDrive rollback folder cleanup skipped.", {
-              folderPath,
-              reason,
-            });
+            await onedrive.deleteItem(descriptionPath);
+            rollbackSucceeded = true;
+            // description.md の削除後、空フォルダが残らないようにフォルダ削除も試みる。
+            try {
+              await onedrive.deleteItem(folderPath);
+              rollbackFolderCleanup = "ok";
+            } catch (folderCleanupError) {
+              const reason = folderCleanupError instanceof Error ? folderCleanupError.message : String(folderCleanupError);
+              rollbackFolderCleanup = `failed (${reason.trim() || "unknown"})`;
+              console.warn("OneDrive rollback folder cleanup skipped.", {
+                folderPath,
+                reason,
+              });
+            }
+          } catch (rollbackError) {
+            rollbackSucceeded = false;
+            const reason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+            rollbackFailureReason = reason.trim() || "unknown";
           }
-        } catch (rollbackError) {
+        } else {
           rollbackSucceeded = false;
-          const reason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-          rollbackFailureReason = reason.trim() || "unknown";
         }
       }
 
@@ -283,6 +334,19 @@ export async function action({ request }: ActionFunctionArgs) {
         ok: true,
         folderPath,
         evidenceImages: evidenceSummary,
+        evidenceImageRecords: evidenceImages.map((record) => ({
+          sourceUrl: record.sourceUrl,
+          status: record.status,
+          fileName: record.fileName,
+          onedrivePath: record.onedrivePath,
+          imageAccessToken: record.onedrivePath ? signEvidenceImagePath(record.onedrivePath) : null,
+          webUrl: record.webUrl,
+          errorReason: record.errorReason,
+        })),
+        alreadySavedFiles: {
+          descriptionMd: descriptionMdAlreadySaved,
+          archiveJson: archiveJsonAlreadySaved,
+        },
         uploaded: {
           descriptionMd: { name: descriptionMd.name, webUrl: descriptionMd.webUrl },
           archiveJson: { name: archiveJson.name, webUrl: archiveJson.webUrl },
@@ -366,11 +430,21 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const parsed = extractOneDriveError(rawMessage);
     const isAuthLike = isOneDriveAuthLikeError(rawMessage); // エラーメッセージの解析結果が認証エラーっぽいかどうか。これが true の場合は 401、そうでない場合は 502 として返す。
-    const hasDetail = Boolean(parsed.code || parsed.message); // 解析結果にエラーコードや詳細メッセージが含まれているかどうか。これが true の場合は、認証エラーっぽい場合でも詳細を含むメッセージを返す。そうでない場合は、認証エラーっぽくても定型の再認証メッセージを返す。
+    if (error instanceof ArchiveJsonInvalidError) {
+      return Response.json(
+        {
+          ok: false,
+          error:
+            "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから再取得してください。",
+          isAuthError: false,
+          errorCode: error.errorCode,
+          errorMessage: undefined,
+        } satisfies ApiOneDriveUploadResponse,
+        { status: 502 },
+      );
+    }
     const message = isAuthLike
-      ? hasDetail
-        ? `${parsed.code ?? "UNKNOWN"}: ${parsed.message ?? rawMessage}`
-        : "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
+      ? "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
       : "OneDrive への保存に失敗しました。しばらくしてから再実行してください。";
     // 認証エラーっぽい場合でも、エラーコードや詳細メッセージがない場合は定型の再認証メッセージを返す。これにより、OneDrive API のエラーレスポンスの形式が変わったり、予期しないエラーが発生した場合でも、ユーザーには再認証が必要な可能性があることを伝えることができる。
     if (!isAuthLike) {
@@ -386,8 +460,8 @@ export async function action({ request }: ActionFunctionArgs) {
         ok: false,
         error: message,
         isAuthError: status === 401,
-        errorCode: isAuthLike ? parsed.code : undefined,
-        errorMessage: isAuthLike ? parsed.message ?? rawMessage : undefined,
+        errorCode: undefined,
+        errorMessage: undefined,
       } satisfies ApiOneDriveUploadResponse,
       { status },
     );
@@ -432,38 +506,6 @@ function formatIsoForJst(date: Date): string {
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}${sign}${offsetHours}:${offsetMins}`;
 }
 
-function slugifyForPath(value: string): string {
-  const normalized = value
-    .normalize("NFC")
-    // OneDrive/Windowsで禁止される文字だけ除去し、日本語は保持する。
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^[-.\s]+|[-.\s]+$/g, "");
-
-  // サロゲートペアを壊さず、かつ過度に長いマルチバイト文字列を避けるため、
-  // コードポイント数と UTF-8 バイト長の両方で上限を適用する。
-  const maxCodePoints = 80;
-  const maxUtf8Bytes = 160;
-  const encoder = new TextEncoder();
-  let result = "";
-  let codePointCount = 0;
-  let utf8ByteCount = 0;
-
-  for (const char of normalized) {
-    const charBytes = encoder.encode(char).length;
-    if (codePointCount + 1 > maxCodePoints || utf8ByteCount + charBytes > maxUtf8Bytes) {
-      break;
-    }
-    result += char;
-    codePointCount += 1;
-    utf8ByteCount += charBytes;
-  }
-
-  return result;
-}
-
 /* 
 / 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
 / これらの機能を提供する関数は services/evidence-images.server.ts に切り出している。
@@ -477,10 +519,12 @@ async function saveEvidenceImages({
   markdown,
   folderPath,
   onedrive,
+  alreadySavedEvidenceBySource,
 }: {
   markdown: string;
   folderPath: string;
   onedrive: EvidenceSaveDependencies;
+  alreadySavedEvidenceBySource: Map<string, { fileName: string | null; onedrivePath: string | null; webUrl: string | null }>;
 }): Promise<EvidenceImageRecord[]> {
   const urls = extractUniqueImageUrls(markdown);
   if (urls.length === 0) return [];
@@ -493,6 +537,18 @@ async function saveEvidenceImages({
   let consecutiveOneDriveSaveFailures = 0;
 
   for (const [index, sourceUrl] of urls.entries()) {
+    const alreadySaved = alreadySavedEvidenceBySource.get(normalizeEvidenceSourceUrl(sourceUrl));
+    if (alreadySaved && alreadySaved.onedrivePath) {
+      results.push({
+        sourceUrl,
+        status: "success",
+        fileName: alreadySaved.fileName,
+        onedrivePath: alreadySaved.onedrivePath,
+        webUrl: alreadySaved.webUrl,
+        errorReason: ALREADY_SAVED_REASON,
+      });
+      continue;
+    }
     if (index >= maxImageCount) {
       const remainingCount = urls.length - index;
       results.push({
@@ -500,6 +556,7 @@ async function saveEvidenceImages({
         status: "failed",
         fileName: null,
         onedrivePath: null,
+        webUrl: null,
         errorReason: `${IMAGE_LIMIT_EXCEEDED_REMAINING_REASON}:${remainingCount}`,
       });
       break;
@@ -510,6 +567,7 @@ async function saveEvidenceImages({
         status: "failed",
         fileName: null,
         onedrivePath: null,
+        webUrl: null,
         errorReason: ONEDRIVE_SAVE_SKIPPED_REASON,
       });
       continue;
@@ -526,6 +584,7 @@ async function saveEvidenceImages({
         status: "failed",
         fileName: null,
         onedrivePath: null,
+        webUrl: null,
         errorReason: downloaded.errorReason,
       });
       continue;
@@ -539,6 +598,7 @@ async function saveEvidenceImages({
         status: "failed",
         fileName: null,
         onedrivePath: null,
+        webUrl: null,
         errorReason: `UNSUPPORTED_CONTENT_TYPE: ${downloaded.contentType ?? "unknown"}`,
       });
       continue;
@@ -553,9 +613,10 @@ async function saveEvidenceImages({
         reservedNames,
       });
       let onedrivePath = `${imagesFolder}/${fileName}`;
+      let savedDriveItem: { name: string; webUrl: string } | null = null;
       for (let retry = 0; retry <= MAX_SAVE_CONFLICT_RETRIES; retry += 1) {
         try {
-          await onedrive.saveBinary(onedrivePath, downloaded.bytes, downloaded.contentType ?? undefined);
+          savedDriveItem = await onedrive.saveBinary(onedrivePath, downloaded.bytes, downloaded.contentType ?? undefined);
           break;
         } catch (saveError) {
           if (
@@ -575,6 +636,7 @@ async function saveEvidenceImages({
         status: "success",
         fileName,
         onedrivePath,
+        webUrl: savedDriveItem?.webUrl ?? null,
         errorReason: null,
       });
       consecutiveOneDriveSaveFailures = 0;
@@ -595,6 +657,7 @@ async function saveEvidenceImages({
           status: "failed",
           fileName: null,
           onedrivePath: null,
+          webUrl: null,
           errorReason: ONEDRIVE_SAVE_FAILED_REASON,
         });
         continue;
@@ -605,6 +668,7 @@ async function saveEvidenceImages({
         status: "failed",
         fileName: null,
         onedrivePath: null,
+        webUrl: null,
         errorReason: parsed.code
           ? `${parsed.code}: ${parsed.message ?? "save failed"}`
           : parsed.message ?? rawMessage,
@@ -713,12 +777,17 @@ function summarizeEvidenceImages(records: EvidenceImageRecord[]): {
   total: number;
   success: number;
   failed: number;
+  alreadySaved: number;
 } {
   let success = 0;
   let failed = 0;
+  let alreadySaved = 0;
   for (const record of records) {
     if (record.status === "success") {
       success += 1;
+      if (record.errorReason === ALREADY_SAVED_REASON) {
+        alreadySaved += 1;
+      }
     } else {
       failed += 1;
     }
@@ -727,5 +796,80 @@ function summarizeEvidenceImages(records: EvidenceImageRecord[]): {
     total: records.length,
     success,
     failed,
+    alreadySaved,
   };
 }
+
+// すでに保存されている証拠画像を、sourceUrl をキーとするマップとして読み込む。これにより、同じ画像URLが複数回出現する場合でも、最初の1回だけ保存して残りは保存済みとしてスキップできるようになる。
+async function loadExistingEvidenceBySource(
+  onedrive: { getText: (path: string) => Promise<string>; getItem: (path: string) => Promise<{ name: string; webUrl: string } | null> },
+  archivePath: string,
+  archiveJsonAlreadySaved: boolean,
+): Promise<Map<string, { fileName: string | null; onedrivePath: string | null; webUrl: string | null }>> {
+  const result = new Map<string, { fileName: string | null; onedrivePath: string | null; webUrl: string | null }>();
+  try {
+    if (!archiveJsonAlreadySaved) return result;
+    const raw = await onedrive.getText(archivePath);
+    let parsed: {
+      evidenceImages?: Array<{
+        sourceUrl?: string;
+        status?: string;
+        fileName?: string | null;
+        onedrivePath?: string | null;
+        webUrl?: string | null;
+      }>;
+    };
+    try {
+      parsed = JSON.parse(raw) as {
+        evidenceImages?: Array<{
+          sourceUrl?: string;
+          status?: string;
+          fileName?: string | null;
+          onedrivePath?: string | null;
+          webUrl?: string | null;
+        }>;
+      };
+    } catch {
+      throw new ArchiveJsonInvalidError();
+    }
+    const candidateRecords = (parsed.evidenceImages ?? []).filter(
+      (record): record is { sourceUrl: string; status?: string; fileName?: string | null; onedrivePath: string; webUrl?: string | null } =>
+        record.status === "success" &&
+        typeof record.sourceUrl === "string" &&
+        record.sourceUrl.trim().length > 0 &&
+        typeof record.onedrivePath === "string" &&
+        record.onedrivePath.trim().length > 0,
+    );
+    const itemResults = await mapWithConcurrencyLimit(
+      candidateRecords,
+      EXISTING_EVIDENCE_LOOKUP_CONCURRENCY,
+      async (record) => onedrive.getItem(record.onedrivePath),
+    );
+    for (const settled of itemResults) {
+      if (settled.status === "rejected") {
+        throw settled.reason;
+      }
+    }
+    for (let index = 0; index < candidateRecords.length; index += 1) {
+      const record = candidateRecords[index];
+      const settled = itemResults[index];
+      if (settled.status !== "fulfilled") continue;
+      const savedItem = settled.value;
+      if (!savedItem) continue;
+      const webUrl = record.webUrl ?? savedItem.webUrl;
+      result.set(normalizeEvidenceSourceUrl(record.sourceUrl), {
+        fileName: record.fileName ?? null,
+        onedrivePath: record.onedrivePath,
+        webUrl,
+      });
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof OneDriveApiError && error.status === 404) {
+      return result;
+    }
+    throw error;
+  }
+}
+
+
