@@ -4,6 +4,7 @@ import {
   extractEvidenceImageByChecklistLine,
   extractResultByChecklistLine,
   mapPrimaryImageErrorToDialog,
+  shouldAutoLookupArchive,
   shouldShowUploadAllEvidenceFailedError,
   shouldUseArchiveChecklistFallback,
 } from "./_index";
@@ -183,5 +184,29 @@ describe("shouldShowUploadAllEvidenceFailedError", () => {
       }),
     ).toBe(false);
     expect(shouldShowUploadAllEvidenceFailedError(undefined)).toBe(false);
+  });
+});
+
+describe("shouldAutoLookupArchive", () => {
+  it("Parse 成功時は他ソースが空でも true", () => {
+    expect(
+      shouldAutoLookupArchive({
+        hasParsedSuccess: true,
+        hasSessionStatus: false,
+        hasUploadSuccess: false,
+        hasArchiveSuccess: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("すべて未成立なら false", () => {
+    expect(
+      shouldAutoLookupArchive({
+        hasParsedSuccess: false,
+        hasSessionStatus: false,
+        hasUploadSuccess: false,
+        hasArchiveSuccess: false,
+      }),
+    ).toBe(false);
   });
 });

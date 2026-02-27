@@ -40,6 +40,8 @@ type ListChildrenOptions = {
   nameStartsWith?: string;
 };
 
+const LIST_CHILDREN_NAME_PREFIX_RE = /^[A-Za-z0-9._-]{1,120}$/;
+
 export interface OneDriveService {
   /** 指定パスにテキストを保存（存在しなければ作成、あれば上書き） */
   saveText(path: string, content: string): Promise<DriveItem>;
@@ -542,6 +544,9 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
         $select: "id,name,webUrl,size,file,folder",
       });
       if (options?.nameStartsWith) {
+        if (!LIST_CHILDREN_NAME_PREFIX_RE.test(options.nameStartsWith)) {
+          throw new Error("OneDrive listChildren: nameStartsWith contains invalid characters");
+        }
         // OData 文字列リテラル内のシングルクォートは2連にエスケープする。
         const escaped = options.nameStartsWith.replace(/'/g, "''");
         params.set("$filter", `startswith(name,'${escaped}')`);

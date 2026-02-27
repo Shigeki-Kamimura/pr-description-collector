@@ -98,7 +98,6 @@ function isChecklistItemRecord(value: unknown): value is ArchiveChecklistItem {
     typeof item.line === "number" &&
     Number.isFinite(item.line) &&
     typeof item.text === "string" &&
-    item.text.trim().length > 0 &&
     typeof item.checked === "boolean"
   );
 }

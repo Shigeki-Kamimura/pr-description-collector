@@ -196,6 +196,17 @@ describe("onedrive service error handling", () => {
     expect(requestUrl).toContain("%24filter=startswith%28name%2C%27PR123-%27%29");
   });
 
+  it("listChildren は不正な nameStartsWith を拒否する", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(
+      service.listChildren("work/project/repo/PullRequests", { nameStartsWith: "PR123-') or name eq '" }),
+    ).rejects.toThrow("OneDrive listChildren: nameStartsWith contains invalid characters");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("saveBinary は content-type を指定して保存する", async () => {
     const fetchMock = vi
       .fn()

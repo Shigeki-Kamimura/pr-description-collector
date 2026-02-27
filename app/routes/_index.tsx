@@ -182,6 +182,20 @@ export function shouldUseArchiveChecklistFallback(data: ActionData | undefined):
   );
 }
 
+export function shouldAutoLookupArchive(params: {
+  hasParsedSuccess: boolean;
+  hasSessionStatus: boolean;
+  hasUploadSuccess: boolean;
+  hasArchiveSuccess: boolean;
+}): boolean {
+  return (
+    params.hasParsedSuccess ||
+    params.hasSessionStatus ||
+    params.hasUploadSuccess ||
+    params.hasArchiveSuccess
+  );
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { token, setCookie } = await ensureCsrfToken(request);
   return Response.json(
@@ -377,9 +391,12 @@ export default function Index() {
         : null,
     [data, prRefValidation],
   );
-  const canAutoLookupArchive = Boolean(
-    sessionStatusFetcher.data?.ok || uploadFetcher.data?.ok || archiveFetcher.data?.ok,
-  );
+  const canAutoLookupArchive = shouldAutoLookupArchive({
+    hasParsedSuccess: Boolean(data?.ok),
+    hasSessionStatus: Boolean(sessionStatusFetcher.data?.ok),
+    hasUploadSuccess: Boolean(uploadFetcher.data?.ok),
+    hasArchiveSuccess: Boolean(archiveFetcher.data?.ok),
+  });
 
   const redirectToTopOnTransportError = () => {
     if (typeof window === "undefined") return;

@@ -307,6 +307,32 @@ describe("api.onedrive.archive action", () => {
     expect(body.evidenceImages).toEqual([]);
   });
 
+  it("checklist item の text が空文字でも archive.json を有効として扱う", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "- [ ] ",
+        checklist: {
+          items: [{ line: 1, text: "", checked: false }],
+        },
+        evidenceImages: [],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: true;
+      found: boolean;
+      checklistItems: Array<{ line: number; text: string; checked: boolean }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.found).toBe(true);
+    expect(body.checklistItems).toEqual([{ line: 1, text: "", checked: false }]);
+  });
+
   it("PullRequests 配下に対象PRフォルダが無い場合は正式エラーを返す", async () => {
     onedrive.getItem.mockResolvedValueOnce(null);
     onedrive.listChildren.mockResolvedValueOnce([{ name: "PR122-Old", webUrl: "https://example.com/old" }]);
