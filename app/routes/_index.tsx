@@ -333,8 +333,18 @@ export default function Index() {
   const collectRequestStartedRef = useRef(false);
   const uploadRequestStartedRef = useRef(false);
   const sessionStatusRequestStartedRef = useRef(false);
+  const archiveRequestStartedRef = useRef(false);
   const archiveLookupKeyRef = useRef<string | null>(null);
   const archiveRefreshOnUploadKeyRef = useRef<string | null>(null);
+  const archiveRequestedKeyRef = useRef<string | null>(null);
+  const [archiveDataKey, setArchiveDataKey] = useState<string | null>(null);
+  const activeChecklistPrKey = useMemo(
+    () =>
+      data?.ok && prRefValidation.ok
+        ? `${prRefValidation.owner}/${prRefValidation.repo}#${prRefValidation.prNumber}`
+        : null,
+    [data, prRefValidation],
+  );
 
   const redirectToTopOnTransportError = () => {
     if (typeof window === "undefined") return;
@@ -350,13 +360,21 @@ export default function Index() {
     window.sessionStorage.removeItem(FETCHER_TRANSPORT_ERROR_KEY);
   }, []);
 
+  const archiveErrorForActiveChecklist =
+    archiveError && activeChecklistPrKey && archiveDataKey === activeChecklistPrKey
+      ? archiveError
+      : null;
   const effectiveError =
     (uploadError && uploadError !== INVALID_PR_REF_ERROR ? uploadError : null) ??
     sessionStatusError ??
-    archiveError;
+    archiveErrorForActiveChecklist;
   const effectiveErrorCode =
     (uploadFetcher.data && !uploadFetcher.data.ok ? uploadFetcher.data.errorCode : undefined) ??
-    (archiveFetcher.data && !archiveFetcher.data.ok ? archiveFetcher.data.errorCode : undefined);
+    (archiveFetcher.data &&
+    !archiveFetcher.data.ok &&
+    archiveDataKey === activeChecklistPrKey
+      ? archiveFetcher.data.errorCode
+      : undefined);
   const isAuthError =
     (uploadFetcher.data && !uploadFetcher.data.ok && uploadFetcher.data.isAuthError) ||
     (sessionStatusFetcher.data &&
@@ -364,6 +382,7 @@ export default function Index() {
       sessionStatusFetcher.data.isAuthError) ||
     (archiveFetcher.data &&
       !archiveFetcher.data.ok &&
+      archiveDataKey === activeChecklistPrKey &&
       archiveFetcher.data.isAuthError) ||
     primaryImageErrorDialog?.isAuthError ||
     false;
@@ -438,6 +457,20 @@ export default function Index() {
   }, [sessionStatusFetcher.state, sessionStatusFetcher.data]);
 
   useEffect(() => {
+    if (archiveFetcher.state !== "idle") {
+      archiveRequestStartedRef.current = true;
+      return;
+    }
+    if (!archiveRequestStartedRef.current) return;
+    archiveRequestStartedRef.current = false;
+    if (!isFetcherApiResponse(archiveFetcher.data)) {
+      redirectToTopOnTransportError();
+      return;
+    }
+    setArchiveDataKey(archiveRequestedKeyRef.current);
+  }, [archiveFetcher.state, archiveFetcher.data]);
+
+  useEffect(() => {
     if (collectFetcher.state !== "idle") return;
     if (collectFetcher.data?.ok && pendingCollectRef) {
       setLastCollectedRef(pendingCollectRef);
@@ -469,6 +502,8 @@ export default function Index() {
     const key = `${prRefValidation.owner}/${prRefValidation.repo}#${prRefValidation.prNumber}`;
     if (archiveLookupKeyRef.current === key) return;
     archiveLookupKeyRef.current = key;
+    archiveRequestedKeyRef.current = key;
+    setArchiveDataKey(null);
     archiveFetcher.submit(
       {
         owner: prRefValidation.owner,
@@ -486,6 +521,8 @@ export default function Index() {
     if (archiveRefreshOnUploadKeyRef.current === key) return;
     archiveRefreshOnUploadKeyRef.current = key;
     archiveLookupKeyRef.current = key;
+    archiveRequestedKeyRef.current = key;
+    setArchiveDataKey(null);
     archiveFetcher.submit(
       {
         owner: prRefValidation.owner,
@@ -542,7 +579,9 @@ export default function Index() {
         status: "success" | "failed";
       }
     >();
-    if (archiveFetcher.data?.ok && archiveFetcher.data.found) {
+    const canUseArchiveForActiveChecklist =
+      activeChecklistPrKey !== null && archiveDataKey === activeChecklistPrKey;
+    if (canUseArchiveForActiveChecklist && archiveFetcher.data?.ok && archiveFetcher.data.found) {
       for (const record of archiveFetcher.data.evidenceImages) {
         map.set(record.normalizedSourceUrl, {
           onedrivePath: record.onedrivePath,
@@ -563,7 +602,7 @@ export default function Index() {
       });
     }
     return map;
-  }, [archiveFetcher.data, uploadFetcher.data]);
+  }, [archiveFetcher.data, uploadFetcher.data, archiveDataKey, activeChecklistPrKey]);
 
   const isSaveTargetInSync = isSamePrRef(lastCollectedRef, currentPrRef);
 
