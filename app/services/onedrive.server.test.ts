@@ -178,6 +178,24 @@ describe("onedrive service error handling", () => {
     await expect(service.getItem("missing.png")).resolves.toBeNull();
   });
 
+  it("listChildren は nameStartsWith を OData filter に変換して呼び出す", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ value: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await service.listChildren("work/project/repo/PullRequests", { nameStartsWith: "PR123-" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [requestUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(requestUrl).toContain("/children?");
+    expect(requestUrl).toContain("%24filter=startswith%28name%2C%27PR123-%27%29");
+  });
+
   it("saveBinary は content-type を指定して保存する", async () => {
     const fetchMock = vi
       .fn()

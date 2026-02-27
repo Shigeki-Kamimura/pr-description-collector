@@ -36,6 +36,10 @@ export type OneDriveDriveInfo = {
   driveType: string | null;
 };
 
+type ListChildrenOptions = {
+  nameStartsWith?: string;
+};
+
 export interface OneDriveService {
   /** 指定パスにテキストを保存（存在しなければ作成、あれば上書き） */
   saveText(path: string, content: string): Promise<DriveItem>;
@@ -52,7 +56,7 @@ export interface OneDriveService {
   /** 指定パスのアイテム情報を取得（未存在時は null） */
   getItem(path: string): Promise<DriveItem | null>;
   /** 指定フォルダ直下の子アイテム一覧を取得 */
-  listChildren(path: string): Promise<DriveItem[]>;
+  listChildren(path: string, options?: ListChildrenOptions): Promise<DriveItem[]>;
   /** 指定パスのファイル/フォルダを削除 */
   deleteItem(path: string): Promise<void>;
   /** 現在のユーザー情報を取得 */
@@ -530,13 +534,21 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
         throw error;
       }
     },
-    async listChildren(path: string): Promise<DriveItem[]> {
+    async listChildren(path: string, options?: ListChildrenOptions): Promise<DriveItem[]> {
       const normalized = normalizeDrivePath(path);
       if (!normalized) throw new Error("OneDrive listChildren: path is empty");
       const encoded = encodeDrivePath(normalized);
+      const params = new URLSearchParams({
+        $select: "id,name,webUrl,size,file,folder",
+      });
+      if (options?.nameStartsWith) {
+        // OData 文字列リテラル内のシングルクォートは2連にエスケープする。
+        const escaped = options.nameStartsWith.replace(/'/g, "''");
+        params.set("$filter", `startswith(name,'${escaped}')`);
+      }
       const response = await graphJson<{ value?: GraphDriveItem[] }>(
         auth.accessToken,
-        `/me/drive/root:/${encoded}:/children?$select=id,name,webUrl,size,file,folder`,
+        `/me/drive/root:/${encoded}:/children?${params.toString()}`,
         { method: "GET" },
       );
       const items = response.value ?? [];

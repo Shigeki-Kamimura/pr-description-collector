@@ -207,7 +207,9 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!folderPath) {
       let candidates: Array<{ name: string }> = [];
       try {
-        candidates = await onedrive.listChildren(pullRequestsRoot);
+        candidates = await onedrive.listChildren(pullRequestsRoot, {
+          nameStartsWith: `PR${prNumber}-`,
+        });
       } catch (error) {
         if (!isOneDriveNotFoundLikeError(error)) {
           throw error;
