@@ -28,6 +28,7 @@ import { normalizeEvidenceSourceUrl } from "../services/evidence-url";
 import { validatePrRefInput } from "../services/validation";
 import { signEvidenceImagePath } from "../services/evidence-image-token.server";
 import { slugifyForPath } from "../services/path-utils";
+import { mapWithConcurrencyLimit } from "../services/concurrency";
 
 // ルートハンドラーとビジネスロジックを分離するため、OneDrive への保存処理の詳細は services/evidence-images.server.ts に委譲する。
 export type ApiOneDriveUploadResponse =
@@ -871,30 +872,4 @@ async function loadExistingEvidenceBySource(
   }
 }
 
-async function mapWithConcurrencyLimit<T, U>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<U>,
-): Promise<Array<PromiseSettledResult<U>>> {
-  if (items.length === 0) return [];
-  const results: Array<PromiseSettledResult<U>> = new Array(items.length);
-  const limit = Math.max(1, Math.floor(concurrency));
-  let nextIndex = 0;
 
-  async function runWorker() {
-    while (nextIndex < items.length) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      try {
-        const value = await worker(items[currentIndex], currentIndex);
-        results[currentIndex] = { status: "fulfilled", value };
-      } catch (reason) {
-        results[currentIndex] = { status: "rejected", reason };
-      }
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(limit, items.length) }, () => runWorker());
-  await Promise.all(workers);
-  return results;
-}

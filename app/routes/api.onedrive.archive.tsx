@@ -17,6 +17,7 @@ import { verifyCsrfToken } from "../services/csrf.server";
 import { normalizeEvidenceSourceUrl } from "../services/evidence-url";
 import { signEvidenceImagePath } from "../services/evidence-image-token.server";
 import { slugifyForPath } from "../services/path-utils";
+import { mapWithConcurrencyLimit } from "../services/concurrency";
 
 type ArchiveEvidenceImage = {
   sourceUrl: string;
@@ -44,6 +45,7 @@ export type ApiOneDriveArchiveResponse =
     };
 
 const ARCHIVE_JSON_INVALID_ERROR_CODE = "ARCHIVE_JSON_INVALID";
+const ARCHIVE_EVIDENCE_LOOKUP_CONCURRENCY = 4;
 // archive.json の内容が不正なときに投げるエラー。クライアント側での識別用。
 class ArchiveJsonInvalidError extends Error {
   readonly errorCode: string;
@@ -132,24 +134,43 @@ export async function action({ request }: ActionFunctionArgs) {
       throw new ArchiveJsonInvalidError();
     }
     const evidenceImages: ArchiveEvidenceImage[] = [];
+    const webUrlLookups: Array<{ evidenceIndex: number; onedrivePath: string }> = [];
+
     for (const record of parsed.evidenceImages ?? []) {
       const sourceUrl = (record.sourceUrl ?? "").trim();
       if (!sourceUrl) continue;
-      let webUrl = record.webUrl ?? null;
-      if (!webUrl && record.onedrivePath) {
-        const item = await onedrive.getItem(record.onedrivePath);
-        webUrl = item?.webUrl ?? null;
+      const webUrl = record.webUrl ?? null;
+      const onedrivePath = record.onedrivePath ?? null;
+      if (!webUrl && onedrivePath) {
+        webUrlLookups.push({ evidenceIndex: evidenceImages.length, onedrivePath });
       }
       evidenceImages.push({
         sourceUrl,
         normalizedSourceUrl: normalizeEvidenceSourceUrl(sourceUrl),
         status: record.status === "success" ? "success" : "failed",
         fileName: record.fileName ?? null,
-        onedrivePath: record.onedrivePath ?? null,
-        imageAccessToken: record.onedrivePath ? signEvidenceImagePath(record.onedrivePath) : null,
+        onedrivePath,
+        imageAccessToken: onedrivePath ? signEvidenceImagePath(onedrivePath) : null,
         webUrl,
         errorReason: record.errorReason ?? null,
       });
+    }
+
+    if (webUrlLookups.length > 0) {
+      const lookupResults = await mapWithConcurrencyLimit(
+        webUrlLookups,
+        ARCHIVE_EVIDENCE_LOOKUP_CONCURRENCY,
+        async ({ onedrivePath }) => onedrive.getItem(onedrivePath),
+      );
+      for (let i = 0; i < lookupResults.length; i++) {
+        const settled = lookupResults[i];
+        if (settled.status === "rejected") {
+          throw settled.reason;
+        }
+        if (settled.value) {
+          evidenceImages[webUrlLookups[i].evidenceIndex].webUrl = settled.value.webUrl;
+        }
+      }
     }
 
     return Response.json(
