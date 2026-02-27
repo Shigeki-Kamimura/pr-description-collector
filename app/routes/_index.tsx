@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useFetcher, useLoaderData, useSearchParams } from "react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import { parseChecklist, summarize, type Checklist } from "../services/checklist";
@@ -46,6 +46,7 @@ const FETCHER_TRANSPORT_ERROR_MESSAGE =
   "サーバーエラーが発生しました。トップページに戻りました。しばらくしてから再実行してください。";
 const OAUTH_CALLBACK_ERROR_MESSAGE =
   "OneDrive 認証に失敗しました。Connect OneDrive から再試行してください。";
+const CSRF_ERROR_MESSAGE = "不正なリクエストです。ページを再読み込みして再試行してください。";
 // Evidence画像URLがhttp(s)で始まるURLであれば返す。それ以外はnullを返す。
 const CHECKBOX_LINE_RE = /^\s*(?:[*-]|\d+\.)\s*\[(?: |x|X)\]\s*/;
 const RESULT_LINE_RE = /^\s*Result[：:]\s*(.*)$/i;
@@ -126,6 +127,13 @@ function buildEvidenceImageApiUrl(onedrivePath: string, imageAccessToken: string
 }
 
 type ImageErrorDialogInfo = { message: string; isAuthError: boolean } | null;
+// 保存済み画像の表示に失敗した場合のエラー内容を、HTTPステータスコードからユーザー向けのメッセージと認証エラーかどうかのフラグにマッピングする。
+type UploadEvidenceSummary = {
+  total: number;
+  success: number;
+  failed: number;
+  alreadySaved: number;
+};
 
 export function mapPrimaryImageErrorToDialog(status: number): ImageErrorDialogInfo {
   switch (status) {
@@ -157,6 +165,21 @@ export function mapPrimaryImageErrorToDialog(status: number): ImageErrorDialogIn
 
 function isFetcherApiResponse(value: unknown): value is { ok: boolean } {
   return typeof value === "object" && value !== null && typeof (value as { ok?: unknown }).ok === "boolean";
+}
+// 保存結果のサマリーから、すべての画像の保存に失敗しているかどうかを判定する。
+// これにより、OneDrive 上の imgs フォルダ構成や権限の問題で画像が保存できていないケースを検出し、ユーザーに適切なエラーメッセージを表示できるようにする。
+export function shouldShowUploadAllEvidenceFailedError(summary: UploadEvidenceSummary | null | undefined): boolean {
+  if (!summary) return false;
+  return summary.total > 0 && summary.success === 0 && summary.failed > 0;
+}
+// APIからのエラーは、ユーザーに画面上の注釈で表示するため、APIエラーがある場合はエラー表示用ダイアログは開かないようにする。
+export function shouldUseArchiveChecklistFallback(data: ActionData | undefined): boolean {
+  return Boolean(
+    data &&
+      !data.ok &&
+      data.error !== INVALID_PR_REF_ERROR &&
+      data.error !== CSRF_ERROR_MESSAGE,
+  );
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -242,7 +265,6 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function Index() {
   const { csrfToken } = useLoaderData<LoaderData>();
   const data = useActionData<ActionData>();
-  const summary = data && data.ok ? summarize(data.result) : null;
 
   const collectFetcher = useFetcher<ApiCollectResponse>();
   const archiveFetcher = useFetcher<ApiOneDriveArchiveResponse>();
@@ -328,6 +350,7 @@ export default function Index() {
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
   const [isDescriptionOpen, setIsDescriptionOpen] = useState(true);
   const [transportError, setTransportError] = useState<string | null>(null);
+  const [uploadResultError, setUploadResultError] = useState<string | null>(null);
   const [primaryImageErrorDialog, setPrimaryImageErrorDialog] = useState<ImageErrorDialogInfo>(null);
   const primaryImageErrorKeyRef = useRef<string | null>(null);
   const collectRequestStartedRef = useRef(false);
@@ -338,12 +361,24 @@ export default function Index() {
   const archiveRefreshOnUploadKeyRef = useRef<string | null>(null);
   const archiveRequestedKeyRef = useRef<string | null>(null);
   const [archiveDataKey, setArchiveDataKey] = useState<string | null>(null);
+  // prRefValidationの内容から、現在表示しているPRを一意に識別するキーを生成する。
+  // prRefValidationが有効でない場合はnullになる。
+  const currentPrKey = useMemo(
+    () =>
+      prRefValidation.ok
+        ? `${prRefValidation.owner}/${prRefValidation.repo}#${prRefValidation.prNumber}`
+        : null,
+    [prRefValidation],
+  );
   const activeChecklistPrKey = useMemo(
     () =>
-      data?.ok && prRefValidation.ok
+      data && prRefValidation.ok
         ? `${prRefValidation.owner}/${prRefValidation.repo}#${prRefValidation.prNumber}`
         : null,
     [data, prRefValidation],
+  );
+  const canAutoLookupArchive = Boolean(
+    sessionStatusFetcher.data?.ok || uploadFetcher.data?.ok || archiveFetcher.data?.ok,
   );
 
   const redirectToTopOnTransportError = () => {
@@ -360,19 +395,21 @@ export default function Index() {
     window.sessionStorage.removeItem(FETCHER_TRANSPORT_ERROR_KEY);
   }, []);
 
-  const archiveErrorForActiveChecklist =
-    archiveError && activeChecklistPrKey && archiveDataKey === activeChecklistPrKey
+  const archiveErrorForCurrentPr =
+    archiveError && currentPrKey && archiveDataKey === currentPrKey
       ? archiveError
       : null;
+  const shouldShowArchiveErrorDialog = data !== undefined;
   const effectiveError =
+    uploadResultError ??
     (uploadError && uploadError !== INVALID_PR_REF_ERROR ? uploadError : null) ??
     sessionStatusError ??
-    archiveErrorForActiveChecklist;
+    (shouldShowArchiveErrorDialog ? archiveErrorForCurrentPr : null);
   const effectiveErrorCode =
     (uploadFetcher.data && !uploadFetcher.data.ok ? uploadFetcher.data.errorCode : undefined) ??
     (archiveFetcher.data &&
     !archiveFetcher.data.ok &&
-    archiveDataKey === activeChecklistPrKey
+    archiveDataKey === currentPrKey
       ? archiveFetcher.data.errorCode
       : undefined);
   const isAuthError =
@@ -382,13 +419,31 @@ export default function Index() {
       sessionStatusFetcher.data.isAuthError) ||
     (archiveFetcher.data &&
       !archiveFetcher.data.ok &&
-      archiveDataKey === activeChecklistPrKey &&
+      archiveDataKey === currentPrKey &&
       archiveFetcher.data.isAuthError) ||
     primaryImageErrorDialog?.isAuthError ||
     false;
   const dialogErrorMessage = transportError ?? effectiveError ?? primaryImageErrorDialog?.message ?? "";
   const dialogErrorContext: "save" | "image" =
     transportError || effectiveError ? "save" : primaryImageErrorDialog ? "image" : "save";
+  const submitArchiveLookup = useCallback(
+    (ownerValue: string, repoValue: string, prNumberValue: number, key: string) => {
+      if (archiveLookupKeyRef.current === key) return;
+      archiveLookupKeyRef.current = key;
+      archiveRequestedKeyRef.current = key;
+      setArchiveDataKey(null);
+      archiveFetcher.submit(
+        {
+          owner: ownerValue,
+          repo: repoValue,
+          prNumber: String(prNumberValue),
+          csrfToken,
+        },
+        { method: "post", action: "/api/onedrive/archive" },
+      );
+    },
+    [archiveFetcher, csrfToken],
+  );
 
   // 画面上のエラー表示は、APIからのエラーと通信エラーで分ける。
   useEffect(() => {
@@ -416,7 +471,14 @@ export default function Index() {
   }, [data]);
 
   useEffect(() => {
-    if (uploadFetcher.data?.ok) setIsSuccessDialogOpen(true);
+    if (!uploadFetcher.data?.ok) return;
+    if (shouldShowUploadAllEvidenceFailedError(uploadFetcher.data.evidenceImages)) {
+      setUploadResultError(
+        "画像の保存にすべて失敗しました。OneDrive 上の imgs フォルダ構成と権限を確認して再実行してください。",
+      );
+      return;
+    }
+    setIsSuccessDialogOpen(true);
   }, [uploadFetcher.data]);
 
   useEffect(() => {
@@ -435,6 +497,7 @@ export default function Index() {
     if (uploadFetcher.state !== "idle") {
       uploadRequestStartedRef.current = true;
       archiveRefreshOnUploadKeyRef.current = null;
+      setUploadResultError(null);
       return;
     }
     if (!uploadRequestStartedRef.current) return;
@@ -498,41 +561,39 @@ export default function Index() {
   }, [onedriveOAuthFailed, searchParams, setSearchParams]);
 
   useEffect(() => {
-    if (!data?.ok || !prRefValidation.ok) return;
+    if (!prRefValidation.ok) return;
+    if (!canAutoLookupArchive) return;
+    if (collectFetcher.state !== "idle" || uploadFetcher.state !== "idle" || archiveFetcher.state !== "idle") return;
     const key = `${prRefValidation.owner}/${prRefValidation.repo}#${prRefValidation.prNumber}`;
-    if (archiveLookupKeyRef.current === key) return;
-    archiveLookupKeyRef.current = key;
-    archiveRequestedKeyRef.current = key;
-    setArchiveDataKey(null);
-    archiveFetcher.submit(
-      {
-        owner: prRefValidation.owner,
-        repo: prRefValidation.repo,
-        prNumber: String(prRefValidation.prNumber),
-        csrfToken,
-      },
-      { method: "post", action: "/api/onedrive/archive" },
-    );
-  }, [data, prRefValidation, csrfToken, archiveFetcher]);
+    submitArchiveLookup(prRefValidation.owner, prRefValidation.repo, prRefValidation.prNumber, key);
+  }, [
+    prRefValidation,
+    canAutoLookupArchive,
+    collectFetcher.state,
+    uploadFetcher.state,
+    archiveFetcher.state,
+    submitArchiveLookup,
+  ]);
 
   useEffect(() => {
     if (!uploadFetcher.data?.ok || !prRefValidation.ok) return;
     const key = `${prRefValidation.owner}/${prRefValidation.repo}#${prRefValidation.prNumber}`;
     if (archiveRefreshOnUploadKeyRef.current === key) return;
     archiveRefreshOnUploadKeyRef.current = key;
-    archiveLookupKeyRef.current = key;
-    archiveRequestedKeyRef.current = key;
-    setArchiveDataKey(null);
-    archiveFetcher.submit(
-      {
-        owner: prRefValidation.owner,
-        repo: prRefValidation.repo,
-        prNumber: String(prRefValidation.prNumber),
-        csrfToken,
-      },
-      { method: "post", action: "/api/onedrive/archive" },
-    );
-  }, [uploadFetcher.data, prRefValidation, csrfToken, archiveFetcher]);
+    archiveLookupKeyRef.current = null;
+    submitArchiveLookup(prRefValidation.owner, prRefValidation.repo, prRefValidation.prNumber, key);
+  }, [uploadFetcher.data, prRefValidation, submitArchiveLookup]);
+
+  // Parse Checklist が GitHub 取得失敗で終わった場合でも、
+  // 保存済み archive.json からのフォールバック表示を試行する。
+  useEffect(() => {
+    if (!prRefValidation.ok) return;
+    if (!shouldUseArchiveChecklistFallback(data)) return;
+    if (archiveFetcher.state !== "idle") return;
+    const key = `${prRefValidation.owner}/${prRefValidation.repo}#${prRefValidation.prNumber}`;
+    if (archiveRequestedKeyRef.current === key) return;
+    submitArchiveLookup(prRefValidation.owner, prRefValidation.repo, prRefValidation.prNumber, key);
+  }, [data, prRefValidation, archiveFetcher.state, submitArchiveLookup]);
 
   useEffect(() => {
     if (isCheckingOneDriveSession && sessionStatusFetcher.data?.ok) {
@@ -560,13 +621,46 @@ export default function Index() {
   const renderedDescriptionHtml = useMemo(() => {
     return descriptionText ? markdown.render(descriptionText) : "";
   }, [descriptionText, markdown]);
+  const archiveChecklistForActive = useMemo(() => {
+    if (!archiveFetcher.data?.ok || !archiveFetcher.data.found) return null;
+    if (!activeChecklistPrKey || archiveDataKey !== activeChecklistPrKey) return null;
+    return {
+      description: archiveFetcher.data.body,
+      items: archiveFetcher.data.checklistItems,
+    };
+  }, [archiveFetcher.data, archiveDataKey, activeChecklistPrKey]);
+  const shouldRenderArchiveFallback =
+    shouldUseArchiveChecklistFallback(data) && archiveChecklistForActive !== null;
+  const checklistDataForDisplay = useMemo(() => {
+    if (data?.ok) {
+      return {
+        items: data.result.items,
+        summary: summarize(data.result),
+        description: data.description,
+      };
+    }
+    if (shouldRenderArchiveFallback && archiveChecklistForActive) {
+      const total = archiveChecklistForActive.items.length;
+      const checked = archiveChecklistForActive.items.filter((item) => item.checked).length;
+      return {
+        items: archiveChecklistForActive.items,
+        summary: {
+          total,
+          checked,
+          percent: total === 0 ? 0 : Math.round((100 * checked) / total),
+        },
+        description: archiveChecklistForActive.description,
+      };
+    }
+    return null;
+  }, [data, shouldRenderArchiveFallback, archiveChecklistForActive]);
   const checklistResultByLine = useMemo(
-    () => (data?.ok ? extractResultByChecklistLine(data.description) : {}),
-    [data],
+    () => (checklistDataForDisplay ? extractResultByChecklistLine(checklistDataForDisplay.description) : {}),
+    [checklistDataForDisplay],
   );
   const checklistEvidenceByLine = useMemo(
-    () => (data?.ok ? extractEvidenceImageByChecklistLine(data.description) : {}),
-    [data],
+    () => (checklistDataForDisplay ? extractEvidenceImageByChecklistLine(checklistDataForDisplay.description) : {}),
+    [checklistDataForDisplay],
   );
   const savedEvidenceBySource = useMemo(() => {
     // セキュリティ設計: ここで扱うURLはすべてOneDriveに保存されたエビデンス画像のURLであり、ユーザーが直接入力するURLではないため、XSSリスクはないと判断している。
@@ -740,6 +834,10 @@ export default function Index() {
                   } else {
                     setShowPrRefAnnotation(false);
                   }
+                  // 同一PRで前回のフォールバック要求が残っていると再試行できないため、
+                  // Parse クリック時に要求状態を明示的にリセットする。
+                  archiveLookupKeyRef.current = null;
+                  archiveRequestedKeyRef.current = null;
                   setShowParseErrorAnnotation(true);
                   setIsDescriptionOpen(false);
                 }}
@@ -770,19 +868,20 @@ export default function Index() {
         )}
       </section>
 
-      {data && data.ok && (
+      {checklistDataForDisplay && (
         <section id="checklist-result-secition" className="result-section">
           <h2>チェックリスト結果</h2>
-          {summary && (
+          {checklistDataForDisplay.summary && (
             <p className="result-meta">
-              {summary.checked}/{summary.total} done ({summary.percent}%)
+              {checklistDataForDisplay.summary.checked}/{checklistDataForDisplay.summary.total} done (
+              {checklistDataForDisplay.summary.percent}%)
             </p>
           )}
-          {data.result.items.length === 0 ? (
+          {checklistDataForDisplay.items.length === 0 ? (
             <p className="checklist-empty-message">チェックリストがありません</p>
           ) : (
             <ul className="checklist-card-list">
-              {data.result.items.map((item) => {
+              {checklistDataForDisplay.items.map((item) => {
                 const checklistResult = checklistResultByLine[item.line] ?? "未設定";
                 const sourceEvidenceUrl = checklistEvidenceByLine[item.line] ?? null;
                 const savedEvidence = sourceEvidenceUrl

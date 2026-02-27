@@ -4,6 +4,8 @@ import {
   extractEvidenceImageByChecklistLine,
   extractResultByChecklistLine,
   mapPrimaryImageErrorToDialog,
+  shouldShowUploadAllEvidenceFailedError,
+  shouldUseArchiveChecklistFallback,
 } from "./_index";
 
 describe("resolveChecklistCardImageUrl", () => {
@@ -121,5 +123,65 @@ describe("mapPrimaryImageErrorToDialog", () => {
     expect(mapPrimaryImageErrorToDialog(400)).toBeNull();
     expect(mapPrimaryImageErrorToDialog(404)).toBeNull();
     expect(mapPrimaryImageErrorToDialog(415)).toBeNull();
+  });
+});
+
+describe("shouldUseArchiveChecklistFallback", () => {
+  it("GitHub取得失敗系の action error なら true", () => {
+    expect(
+      shouldUseArchiveChecklistFallback({
+        ok: false,
+        error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。",
+      }),
+    ).toBe(true);
+  });
+
+  it("入力エラー/CSRF/未実行は false", () => {
+    expect(
+      shouldUseArchiveChecklistFallback({
+        ok: false,
+        error: "owner/repo/prNumber を正しく指定してください",
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseArchiveChecklistFallback({
+        ok: false,
+        error: "不正なリクエストです。ページを再読み込みして再試行してください。",
+      }),
+    ).toBe(false);
+    expect(shouldUseArchiveChecklistFallback(undefined)).toBe(false);
+  });
+});
+
+describe("shouldShowUploadAllEvidenceFailedError", () => {
+  it("画像対象があり成功0/失敗ありの場合は true", () => {
+    expect(
+      shouldShowUploadAllEvidenceFailedError({
+        total: 2,
+        success: 0,
+        failed: 2,
+        alreadySaved: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("成功あり・対象0・未定義は false", () => {
+    expect(
+      shouldShowUploadAllEvidenceFailedError({
+        total: 2,
+        success: 1,
+        failed: 1,
+        alreadySaved: 0,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowUploadAllEvidenceFailedError({
+        total: 0,
+        success: 0,
+        failed: 0,
+        alreadySaved: 0,
+      }),
+    ).toBe(false);
+    expect(shouldShowUploadAllEvidenceFailedError(undefined)).toBe(false);
   });
 });

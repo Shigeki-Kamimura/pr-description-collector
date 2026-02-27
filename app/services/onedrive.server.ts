@@ -51,6 +51,8 @@ export interface OneDriveService {
   getBinary(path: string): Promise<{ bytes: Uint8Array; contentType: string | null }>;
   /** 指定パスのアイテム情報を取得（未存在時は null） */
   getItem(path: string): Promise<DriveItem | null>;
+  /** 指定フォルダ直下の子アイテム一覧を取得 */
+  listChildren(path: string): Promise<DriveItem[]>;
   /** 指定パスのファイル/フォルダを削除 */
   deleteItem(path: string): Promise<void>;
   /** 現在のユーザー情報を取得 */
@@ -527,6 +529,18 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
         if (error instanceof OneDriveApiError && error.status === 404) return null;
         throw error;
       }
+    },
+    async listChildren(path: string): Promise<DriveItem[]> {
+      const normalized = normalizeDrivePath(path);
+      if (!normalized) throw new Error("OneDrive listChildren: path is empty");
+      const encoded = encodeDrivePath(normalized);
+      const response = await graphJson<{ value?: GraphDriveItem[] }>(
+        auth.accessToken,
+        `/me/drive/root:/${encoded}:/children?$select=id,name,webUrl,size,file,folder`,
+        { method: "GET" },
+      );
+      const items = response.value ?? [];
+      return items.map(toDriveItem);
     },
     // アイテム削除ユーティリティ
     async deleteItem(path: string): Promise<void> {
