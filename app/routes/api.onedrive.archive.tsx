@@ -79,6 +79,17 @@ class ArchiveEvidenceIntegrityError extends Error {
   }
 }
 
+// OneDrive API の 404 を「対象データ未存在」として扱える形に正規化する。
+function isOneDriveNotFoundLikeError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "status" in error) {
+    return (error as { status?: unknown }).status === 404;
+  }
+  if (error instanceof Error) {
+    return /OneDrive API error \(404\)/.test(error.message);
+  }
+  return false;
+}
+
 // archive.json.checklist.items の型ガード。
 function isChecklistItemRecord(value: unknown): value is ArchiveChecklistItem {
   if (typeof value !== "object" || value === null) return false;
@@ -194,7 +205,14 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
     if (!folderPath) {
-      const candidates = await onedrive.listChildren(pullRequestsRoot);
+      let candidates: Array<{ name: string }> = [];
+      try {
+        candidates = await onedrive.listChildren(pullRequestsRoot);
+      } catch (error) {
+        if (!isOneDriveNotFoundLikeError(error)) {
+          throw error;
+        }
+      }
       const folder = candidates.find((item) => item.name.startsWith(`PR${prNumber}-`));
       if (folder) {
         folderPath = `${pullRequestsRoot}/${folder.name}`;

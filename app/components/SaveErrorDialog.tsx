@@ -10,6 +10,18 @@ export function formatPartialWriteErrorMessage(error: string): string | null {
   return "保存中にエラーが発生しました。一部のファイルが保存されたまま残っている可能性があります。再実行する前に OneDrive 上の保存先フォルダーを確認し、重複や不要なファイルを整理してください。解決しない場合は、再認証または時間をおいて再実行してください。";
 }
 
+export function formatErrorDialogTitle(
+  errorContext: "save" | "display" | "image",
+  isAuthError: boolean,
+): string {
+  const category = isAuthError
+    ? "認証"
+    : errorContext === "save"
+      ? "保存"
+      : "表示";
+  return `エラーが発生しました（${category}）`;
+}
+
 // 保存エラーダイアログのプロパティ
 type SaveErrorDialogProps = {
   open: boolean; // ダイアログ表示フラグ
@@ -17,7 +29,7 @@ type SaveErrorDialogProps = {
   error: string; // エラーメッセージ
   errorCode?: string; // エラーコード
   isAuthError: boolean; // 認証エラーかどうか
-  errorContext?: "save" | "image"; // エラー文脈
+  errorContext?: "save" | "display" | "image"; // エラー文脈
 };
 
 export function SaveErrorDialog({
@@ -43,27 +55,20 @@ export function SaveErrorDialog({
   if (!error) return null;
 
   const isImageContext = errorContext === "image";
+  const isDisplayContext = errorContext === "display";
   const isArchiveJsonInvalid = errorCode === "ARCHIVE_JSON_INVALID";
   const formattedPartialWriteError = !isAuthError && !isImageContext
     ? formatPartialWriteErrorMessage(error)
     : null;
-  const title = isImageContext
-    ? isAuthError
-      ? "OneDrive の再認証が必要です"
-      : "画像表示に失敗しました"
-    : isAuthError
-      ? "OneDrive の再認証が必要です"
-      : isArchiveJsonInvalid
-        ? "archive.json を削除してください"
-      : formattedPartialWriteError
-        ? "保存に失敗しました（途中まで保存）"
-        : "保存に失敗しました";
+  const title = formatErrorDialogTitle(errorContext, isAuthError);
   const message = isImageContext
     ? isAuthError
       ? `${error}\n再認証してから画像表示を再試行してください。`
       : error
     : isAuthError
-      ? `${error}\n再認証してから保存をやり直してください。解決しない場合は管理者にお問い合わせください。`
+      ? isDisplayContext
+        ? `${error}\n再認証してから表示を再実行してください。解決しない場合は管理者にお問い合わせください。`
+        : `${error}\n再認証してから保存をやり直してください。解決しない場合は管理者にお問い合わせください。`
       : isArchiveJsonInvalid
         ? "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから、Get Description (Fetch Only) と Save to OneDrive (with images) を再実行してください。"
       : (formattedPartialWriteError ?? error);

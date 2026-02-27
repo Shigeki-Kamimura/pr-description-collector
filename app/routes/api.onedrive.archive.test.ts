@@ -326,6 +326,28 @@ describe("api.onedrive.archive action", () => {
     expect(body.errorCode).toBe("ARCHIVE_PR_NOT_FOUND");
   });
 
+  it("PullRequests フォルダ自体が404の場合も正式エラーを返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce(null);
+    onedrive.listChildren.mockRejectedValueOnce({
+      status: 404,
+      message: "OneDrive API error (404) [code=itemNotFound]",
+    });
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+    };
+
+    expect(response.status).toBe(404);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe("OneDrive 上に保存済みのPRデータが見つかりません。");
+    expect(body.errorCode).toBe("ARCHIVE_PR_NOT_FOUND");
+  });
+
   it("GitHub取得失敗時は OneDrive プレフィックス探索へフォールバックする", async () => {
     github.getPullRequest.mockRejectedValueOnce(new Error("not found"));
     onedrive.listChildren.mockResolvedValueOnce([{ name: "PR123-Manual", webUrl: "https://example.com/folder" }]);

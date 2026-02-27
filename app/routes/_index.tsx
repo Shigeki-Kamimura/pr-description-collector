@@ -424,8 +424,12 @@ export default function Index() {
     primaryImageErrorDialog?.isAuthError ||
     false;
   const dialogErrorMessage = transportError ?? effectiveError ?? primaryImageErrorDialog?.message ?? "";
-  const dialogErrorContext: "save" | "image" =
-    transportError || effectiveError ? "save" : primaryImageErrorDialog ? "image" : "save";
+  const hasArchiveDisplayError = Boolean(shouldShowArchiveErrorDialog && archiveErrorForCurrentPr);
+  const dialogErrorContext: "save" | "display" | "image" = primaryImageErrorDialog
+    ? "image"
+    : hasArchiveDisplayError
+      ? "display"
+      : "save";
   const submitArchiveLookup = useCallback(
     (ownerValue: string, repoValue: string, prNumberValue: number, key: string) => {
       if (archiveLookupKeyRef.current === key) return;
