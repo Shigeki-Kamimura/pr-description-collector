@@ -1,9 +1,11 @@
 /**
  * PR 参照入力（owner/repo/prNumber）の共通バリデーション。
  *
- * 境界:
- * - フロントエンドとバックエンドで同一ルールを使う
- * - 要件定義の許容文字/長さをこのモジュールに集約する
+ * このファイルを用意した理由:
+ * - owner/repo/prNumber の入力ルールを1か所に集約し、画面とAPIでズレないようにするため。
+ *
+ * このファイルが使われる場面:
+ * - `Get Description`、`Parse Checklist`、OneDrive 系 API が PR 参照入力を検証するとき。
  */
 export type PrRefValidationResult =
   | { ok: true; owner: string; repo: string; prNumber: number }
@@ -15,7 +17,7 @@ const OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 const PR_NUMBER_PATTERN = /^[1-9][0-9]*$/;
 
-// フロント/バックエンドで共有するPR参照バリデーション本体
+// 文字列入力を受け取って、要件どおりの PR 参照に変換できるかを判定する本体。
 export function validatePrRefFields(
   ownerInput: string,
   repoInput: string,
@@ -32,7 +34,7 @@ export function validatePrRefFields(
   const prNumber = Number.parseInt(prNumberRaw, 10);
   return { ok: true, owner, repo, prNumber };
 }
-// フォームデータからPR参照をバリデーションするユーティリティ
+// FormData から取り出す入口。各 route からはこの関数を呼べば同一ルールを使える。
 export function validatePrRefInput(formData: FormData): PrRefValidationResult {
   const owner = String(formData.get("owner") ?? "");
   const repo = String(formData.get("repo") ?? "");
