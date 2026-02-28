@@ -240,6 +240,25 @@ describe("onedrive service error handling", () => {
     expect(secondUrl).toBe("https://graph.microsoft.com/v1.0/me/drive/root:/next-page");
   });
 
+  it("listChildren は Graph 以外の @odata.nextLink を拒否する", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          value: [{ id: "1", name: "PR123-Page1", webUrl: "https://example.com/1" }],
+          "@odata.nextLink": "https://evil.example.com/v1.0/me/drive/root:/next-page",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(
+      service.listChildren("work/project/repo/PullRequests", { nameStartsWith: "PR123-" }),
+    ).rejects.toThrow("OneDrive graphJson: absolute URL must use https://graph.microsoft.com");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("saveBinary は content-type を指定して保存する", async () => {
     const fetchMock = vi
       .fn()

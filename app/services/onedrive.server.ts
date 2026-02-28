@@ -214,9 +214,15 @@ function toDriveItem(item: GraphDriveItem): DriveItem {
 
 // Graph APIを呼び出してJSONレスポンスを取得するユーティリティ
 async function graphJson<T>(accessToken: string, pathOrUrl: string, init?: RequestInit): Promise<T> {
-  const requestUrl = pathOrUrl.startsWith("https://") || pathOrUrl.startsWith("http://")
-    ? pathOrUrl
-    : `${GRAPH_BASE_URL}${pathOrUrl}`;
+  let requestUrl = `${GRAPH_BASE_URL}${pathOrUrl}`;
+  if (pathOrUrl.startsWith("https://") || pathOrUrl.startsWith("http://")) {
+    const absoluteUrl = new URL(pathOrUrl);
+    const graphBaseUrl = new URL(GRAPH_BASE_URL);
+    if (absoluteUrl.origin !== graphBaseUrl.origin) {
+      throw new Error(`OneDrive graphJson: absolute URL must use ${graphBaseUrl.origin}`);
+    }
+    requestUrl = absoluteUrl.toString();
+  }
   const response = await fetch(requestUrl, {
     ...init,
     headers: {
