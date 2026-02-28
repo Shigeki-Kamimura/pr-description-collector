@@ -130,7 +130,10 @@ function parseArchiveJson(raw: string): {
   } catch {
     throw new ArchiveJsonInvalidError();
   }
-  const body = typeof parsed.body === "string" ? parsed.body : "";
+  if (typeof parsed.body !== "string") {
+    throw new ArchiveJsonInvalidError();
+  }
+  const body = parsed.body;
   const rawChecklistItems = parsed.checklist?.items;
   if (!Array.isArray(rawChecklistItems) || !rawChecklistItems.every(isChecklistItemRecord)) {
     throw new ArchiveJsonInvalidError();

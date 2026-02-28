@@ -213,8 +213,11 @@ function toDriveItem(item: GraphDriveItem): DriveItem {
 }
 
 // Graph APIを呼び出してJSONレスポンスを取得するユーティリティ
-async function graphJson<T>(accessToken: string, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
+async function graphJson<T>(accessToken: string, pathOrUrl: string, init?: RequestInit): Promise<T> {
+  const requestUrl = pathOrUrl.startsWith("https://") || pathOrUrl.startsWith("http://")
+    ? pathOrUrl
+    : `${GRAPH_BASE_URL}${pathOrUrl}`;
+  const response = await fetch(requestUrl, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -551,12 +554,16 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
         const escaped = options.nameStartsWith.replace(/'/g, "''");
         params.set("$filter", `startswith(name,'${escaped}')`);
       }
-      const response = await graphJson<{ value?: GraphDriveItem[] }>(
-        auth.accessToken,
-        `/me/drive/root:/${encoded}:/children?${params.toString()}`,
-        { method: "GET" },
-      );
-      const items = response.value ?? [];
+      const items: GraphDriveItem[] = [];
+      let nextPathOrUrl = `/me/drive/root:/${encoded}:/children?${params.toString()}`;
+      while (nextPathOrUrl) {
+        const response = await graphJson<{
+          value?: GraphDriveItem[];
+          "@odata.nextLink"?: string;
+        }>(auth.accessToken, nextPathOrUrl, { method: "GET" });
+        items.push(...(response.value ?? []));
+        nextPathOrUrl = response["@odata.nextLink"] ?? "";
+      }
       return items.map(toDriveItem);
     },
     // アイテム削除ユーティリティ

@@ -207,6 +207,39 @@ describe("onedrive service error handling", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("listChildren は @odata.nextLink を辿って全ページを取得する", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [{ id: "1", name: "PR123-Page1", webUrl: "https://example.com/1" }],
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/drive/root:/next-page",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [{ id: "2", name: "PR123-Page2", webUrl: "https://example.com/2" }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    const items = await service.listChildren("work/project/repo/PullRequests", { nameStartsWith: "PR123-" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(items.map((item) => item.name)).toEqual(["PR123-Page1", "PR123-Page2"]);
+    const [firstUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [secondUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(firstUrl).toContain("/children?");
+    expect(secondUrl).toBe("https://graph.microsoft.com/v1.0/me/drive/root:/next-page");
+  });
+
   it("saveBinary は content-type を指定して保存する", async () => {
     const fetchMock = vi
       .fn()
