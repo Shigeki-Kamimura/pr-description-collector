@@ -126,17 +126,19 @@ npm run build
 
 ### Docker Deployment
 
-To build and run using Docker:
+ローカル開発は `npm run dev`（Vite/React Router dev server）を前提とします。
+Docker イメージは HMR 用ではなく、production build を配布・起動するためのものです。
+
+Build and run the production container:
 
 ```bash
-docker build -t my-app .
+docker build -t pr-description-collector .
 
 # Run the container
 docker run \
-  -e NODE_ENV=production \
   -e SESSION_SECRET=replace-with-a-long-random-secret \
   -p 3000:3000 \
-  my-app
+  pr-description-collector
 ```
 
 Notes:
@@ -144,6 +146,8 @@ Notes:
 - `SESSION_SECRET` は production で必須です。
 - OneDrive OAuth を production で使う場合は、永続 token store 実装が必要です。
 - 一時運用でメモリ token store を使う場合のみ `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true` を明示してください。
+- `http://localhost:3000` への直アクセスは、コンテナの疎通確認用です。
+- ブラウザでの実運用確認や OneDrive OAuth は、HTTPS 終端された入口（Nginx / ingress / load balancer）配下で行ってください。
 
 The containerized application can be deployed to any platform that supports Docker, including:
 
