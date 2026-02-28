@@ -56,6 +56,7 @@ export type ApiOneDriveArchiveResponse =
 const ARCHIVE_JSON_INVALID_ERROR_CODE = "ARCHIVE_JSON_INVALID";
 const ARCHIVE_EVIDENCE_INTEGRITY_ERROR_CODE = "ARCHIVE_EVIDENCE_INTEGRITY_INVALID";
 const ARCHIVE_PR_NOT_FOUND_ERROR_CODE = "ARCHIVE_PR_NOT_FOUND";
+const ARCHIVE_PR_FOLDER_CONFLICT_ERROR_CODE = "ARCHIVE_PR_FOLDER_CONFLICT";
 const ARCHIVE_EVIDENCE_LOOKUP_CONCURRENCY = 4;
 // archive.json の内容が不正なときに投げるエラー。クライアント側での識別用。
 class ArchiveJsonInvalidError extends Error {
@@ -214,7 +215,21 @@ export async function action({ request }: ActionFunctionArgs) {
           throw error;
         }
       }
-      const folder = candidates.find((item) => item.name.startsWith(`PR${prNumber}-`));
+      const matchedFolders = candidates.filter((item) => item.name.startsWith(`PR${prNumber}-`));
+      if (matchedFolders.length > 1) {
+        return Response.json(
+          {
+            ok: false,
+            error:
+              "OneDrive 上に同じPR番号の保存フォルダが複数あり、表示対象を特定できません。不要なフォルダを整理してください。",
+            isAuthError: false,
+            errorCode: ARCHIVE_PR_FOLDER_CONFLICT_ERROR_CODE,
+            errorMessage: undefined,
+          } satisfies ApiOneDriveArchiveResponse,
+          { status: 409 },
+        );
+      }
+      const folder = matchedFolders[0];
       if (folder) {
         folderPath = `${pullRequestsRoot}/${folder.name}`;
       }
