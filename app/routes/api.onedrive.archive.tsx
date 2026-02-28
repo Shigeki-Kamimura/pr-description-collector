@@ -246,7 +246,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
     if (!folderPath) {
-      let candidates: Array<{ name: string }> = [];
+      let candidates: Array<{ name: string; isFolder: boolean }> = [];
       try {
         candidates = await onedrive.listChildren(pullRequestsRoot, {
           nameStartsWith: `PR${prNumber}-`,
@@ -256,7 +256,7 @@ export async function action({ request }: ActionFunctionArgs) {
           throw error;
         }
       }
-      const matchedFolders = candidates.filter((item) => item.name.startsWith(`PR${prNumber}-`));
+      const matchedFolders = candidates.filter((item) => item.isFolder && item.name.startsWith(`PR${prNumber}-`));
       if (matchedFolders.length > 1) {
         return Response.json(
           {

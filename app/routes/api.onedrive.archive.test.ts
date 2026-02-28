@@ -76,7 +76,7 @@ describe("api.onedrive.archive action", () => {
     onedrive = {
       getDriveInfo: vi.fn().mockResolvedValue({ id: "drive-1", driveType: "business" }),
       listChildren: vi.fn().mockResolvedValue([
-        { name: "PR123-Test-PR", webUrl: "https://example.com/folder" },
+        { name: "PR123-Test-PR", webUrl: "https://example.com/folder", isFolder: true },
       ]),
       getItem: vi.fn(),
       getText: vi.fn(),
@@ -473,8 +473,8 @@ describe("api.onedrive.archive action", () => {
   it("同じPR番号の保存フォルダが複数ある場合は409を返す", async () => {
     onedrive.getItem.mockResolvedValueOnce(null);
     onedrive.listChildren.mockResolvedValueOnce([
-      { name: "PR123-OldTitle", webUrl: "https://example.com/old" },
-      { name: "PR123-NewTitle", webUrl: "https://example.com/new" },
+      { name: "PR123-OldTitle", webUrl: "https://example.com/old", isFolder: true },
+      { name: "PR123-NewTitle", webUrl: "https://example.com/new", isFolder: true },
     ]);
 
     const response = await action({ request: buildRequest() } as never);
@@ -496,7 +496,9 @@ describe("api.onedrive.archive action", () => {
 
   it("GitHub取得失敗時は OneDrive プレフィックス探索へフォールバックする", async () => {
     github.getPullRequest.mockRejectedValueOnce(new Error("not found"));
-    onedrive.listChildren.mockResolvedValueOnce([{ name: "PR123-Manual", webUrl: "https://example.com/folder" }]);
+    onedrive.listChildren.mockResolvedValueOnce([
+      { name: "PR123-Manual", webUrl: "https://example.com/folder", isFolder: true },
+    ]);
     onedrive.getItem.mockImplementation(async (path: string) => {
       if (path.endsWith("/archive.json")) {
         return { name: "archive.json", webUrl: "https://example.com/archive" };
@@ -513,6 +515,34 @@ describe("api.onedrive.archive action", () => {
 
     const response = await action({ request: buildRequest() } as never);
     const body = (await response.json()) as { ok: true; found: boolean };
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.found).toBe(true);
+  });
+
+  it("プレフィックス一致するファイルは競合候補に含めずフォルダを優先する", async () => {
+    github.getPullRequest.mockRejectedValueOnce(new Error("not found"));
+    onedrive.listChildren.mockResolvedValueOnce([
+      { name: "PR123-notes.txt", webUrl: "https://example.com/file", isFolder: false },
+      { name: "PR123-Manual", webUrl: "https://example.com/folder", isFolder: true },
+    ]);
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive" };
+      }
+      return null;
+    });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "",
+        checklist: { items: [] },
+        evidenceImages: [],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: true; found: boolean };
+
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.found).toBe(true);

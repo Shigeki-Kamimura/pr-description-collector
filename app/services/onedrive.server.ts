@@ -20,6 +20,7 @@ export type DriveItem = {
   id: DriveItemId;
   name: string;
   webUrl: string;
+  isFolder: boolean;
   size?: number;
   mimeType?: string;
 };
@@ -207,6 +208,7 @@ function toDriveItem(item: GraphDriveItem): DriveItem {
     id: item.id,
     name: item.name,
     webUrl: item.webUrl ?? "",
+    isFolder: item.folder !== undefined,
     size: item.size,
     mimeType: item.file?.mimeType,
   };
