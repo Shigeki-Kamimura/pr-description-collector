@@ -113,7 +113,29 @@ function isArchiveEvidenceImageRecord(
   webUrl?: string | null;
   errorReason?: string | null;
 } {
-  return typeof value === "object" && value !== null;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as {
+    sourceUrl?: unknown;
+    status?: unknown;
+    fileName?: unknown;
+    onedrivePath?: unknown;
+    webUrl?: unknown;
+    errorReason?: unknown;
+  };
+  return (
+    (record.sourceUrl === undefined || typeof record.sourceUrl === "string") &&
+    (record.status === undefined || typeof record.status === "string") &&
+    (record.fileName === undefined || record.fileName === null || typeof record.fileName === "string") &&
+    (record.onedrivePath === undefined ||
+      record.onedrivePath === null ||
+      typeof record.onedrivePath === "string") &&
+    (record.webUrl === undefined || record.webUrl === null || typeof record.webUrl === "string") &&
+    (record.errorReason === undefined ||
+      record.errorReason === null ||
+      typeof record.errorReason === "string")
+  );
 }
 
 // archive.json の必須部分（body/checklist.items/evidenceImages）を検証して返す。
