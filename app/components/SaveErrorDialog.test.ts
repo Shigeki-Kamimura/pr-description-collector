@@ -8,7 +8,7 @@
  * - `npm run test` 実行時に、エラーメッセージの情報漏えい回帰を検知するとき。
  */
 import { describe, expect, it } from "vitest";
-import { formatPartialWriteErrorMessage } from "./SaveErrorDialog";
+import { formatErrorDialogTitle, formatPartialWriteErrorMessage } from "./SaveErrorDialog";
 
 describe("formatPartialWriteErrorMessage", () => {
   it("partial-write では常に定型メッセージを返す", () => {
@@ -22,5 +22,24 @@ describe("formatPartialWriteErrorMessage", () => {
 
   it("partial-write でなければ null を返す", () => {
     expect(formatPartialWriteErrorMessage("OneDrive API error (401)")).toBeNull();
+  });
+});
+
+describe("formatErrorDialogTitle", () => {
+  it("保存文脈は保存ラベルを返す", () => {
+    expect(formatErrorDialogTitle("save", false)).toBe("エラーが発生しました（保存）");
+  });
+
+  it("画像文脈は表示ラベルを返す", () => {
+    expect(formatErrorDialogTitle("image", false)).toBe("エラーが発生しました（表示）");
+  });
+
+  it("表示文脈は表示ラベルを返す", () => {
+    expect(formatErrorDialogTitle("display", false)).toBe("エラーが発生しました（表示）");
+  });
+
+  it("認証エラー時は文脈より認証ラベルを優先する", () => {
+    expect(formatErrorDialogTitle("save", true)).toBe("エラーが発生しました（認証）");
+    expect(formatErrorDialogTitle("image", true)).toBe("エラーが発生しました（認証）");
   });
 });

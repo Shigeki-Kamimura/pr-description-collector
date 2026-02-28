@@ -20,6 +20,7 @@ export type DriveItem = {
   id: DriveItemId;
   name: string;
   webUrl: string;
+  isFolder: boolean;
   size?: number;
   mimeType?: string;
 };
@@ -36,6 +37,12 @@ export type OneDriveDriveInfo = {
   driveType: string | null;
 };
 
+type ListChildrenOptions = {
+  nameStartsWith?: string;
+};
+
+const LIST_CHILDREN_NAME_PREFIX_RE = /^[A-Za-z0-9._-]{1,120}$/;
+
 export interface OneDriveService {
   /** 指定パスにテキストを保存（存在しなければ作成、あれば上書き） */
   saveText(path: string, content: string): Promise<DriveItem>;
@@ -51,6 +58,8 @@ export interface OneDriveService {
   getBinary(path: string): Promise<{ bytes: Uint8Array; contentType: string | null }>;
   /** 指定パスのアイテム情報を取得（未存在時は null） */
   getItem(path: string): Promise<DriveItem | null>;
+  /** 指定フォルダ直下の子アイテム一覧を取得 */
+  listChildren(path: string, options?: ListChildrenOptions): Promise<DriveItem[]>;
   /** 指定パスのファイル/フォルダを削除 */
   deleteItem(path: string): Promise<void>;
   /** 現在のユーザー情報を取得 */
@@ -199,14 +208,24 @@ function toDriveItem(item: GraphDriveItem): DriveItem {
     id: item.id,
     name: item.name,
     webUrl: item.webUrl ?? "",
+    isFolder: item.folder !== undefined,
     size: item.size,
     mimeType: item.file?.mimeType,
   };
 }
 
 // Graph APIを呼び出してJSONレスポンスを取得するユーティリティ
-async function graphJson<T>(accessToken: string, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
+async function graphJson<T>(accessToken: string, pathOrUrl: string, init?: RequestInit): Promise<T> {
+  let requestUrl = `${GRAPH_BASE_URL}${pathOrUrl}`;
+  if (pathOrUrl.startsWith("https://") || pathOrUrl.startsWith("http://")) {
+    const absoluteUrl = new URL(pathOrUrl);
+    const graphBaseUrl = new URL(GRAPH_BASE_URL);
+    if (absoluteUrl.origin !== graphBaseUrl.origin) {
+      throw new Error(`OneDrive graphJson: absolute URL must use ${graphBaseUrl.origin}`);
+    }
+    requestUrl = absoluteUrl.toString();
+  }
+  const response = await fetch(requestUrl, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -527,6 +546,33 @@ export function createOneDriveService(auth: OneDriveAuth): OneDriveService {
         if (error instanceof OneDriveApiError && error.status === 404) return null;
         throw error;
       }
+    },
+    async listChildren(path: string, options?: ListChildrenOptions): Promise<DriveItem[]> {
+      const normalized = normalizeDrivePath(path);
+      if (!normalized) throw new Error("OneDrive listChildren: path is empty");
+      const encoded = encodeDrivePath(normalized);
+      const params = new URLSearchParams({
+        $select: "id,name,webUrl,size,file,folder",
+      });
+      if (options?.nameStartsWith) {
+        if (!LIST_CHILDREN_NAME_PREFIX_RE.test(options.nameStartsWith)) {
+          throw new Error("OneDrive listChildren: nameStartsWith contains invalid characters");
+        }
+        // OData 文字列リテラル内のシングルクォートは2連にエスケープする。
+        const escaped = options.nameStartsWith.replace(/'/g, "''");
+        params.set("$filter", `startswith(name,'${escaped}')`);
+      }
+      const items: GraphDriveItem[] = [];
+      let nextPathOrUrl = `/me/drive/root:/${encoded}:/children?${params.toString()}`;
+      while (nextPathOrUrl) {
+        const response = await graphJson<{
+          value?: GraphDriveItem[];
+          "@odata.nextLink"?: string;
+        }>(auth.accessToken, nextPathOrUrl, { method: "GET" });
+        items.push(...(response.value ?? []));
+        nextPathOrUrl = response["@odata.nextLink"] ?? "";
+      }
+      return items.map(toDriveItem);
     },
     // アイテム削除ユーティリティ
     async deleteItem(path: string): Promise<void> {

@@ -36,6 +36,7 @@ type MockGitHubService = {
 
 type MockOneDriveService = {
   getDriveInfo: ReturnType<typeof vi.fn>;
+  listChildren: ReturnType<typeof vi.fn>;
   getItem: ReturnType<typeof vi.fn>;
   getText: ReturnType<typeof vi.fn>;
 };
@@ -74,26 +75,39 @@ describe("api.onedrive.archive action", () => {
 
     onedrive = {
       getDriveInfo: vi.fn().mockResolvedValue({ id: "drive-1", driveType: "business" }),
+      listChildren: vi.fn().mockResolvedValue([
+        { name: "PR123-Test-PR", webUrl: "https://example.com/folder", isFolder: true },
+      ]),
       getItem: vi.fn(),
       getText: vi.fn(),
     };
     vi.mocked(createOneDriveServiceFromEnv).mockResolvedValue(onedrive as never);
   });
 
-  it("archive.json が無い場合は found=false を返す", async () => {
+  it("archive.json が無い場合は正式エラーを返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce(null);
     onedrive.getItem.mockResolvedValueOnce(null);
 
     const response = await action({ request: buildRequest() } as never);
-    const body = (await response.json()) as { ok: true; found: boolean; evidenceImages: unknown[] };
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+    };
 
-    expect(response.status).toBe(200);
-    expect(body.ok).toBe(true);
-    expect(body.found).toBe(false);
-    expect(body.evidenceImages).toEqual([]);
+    expect(response.status).toBe(404);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe("OneDrive 上に保存済みの archive.json が見つかりません。");
+    expect(body.errorCode).toBe("ARCHIVE_PR_NOT_FOUND");
   });
 
   it("archive.json から保存済み画像情報を返す", async () => {
     onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/PullRequests/PR123-Test-PR")) {
+        return { name: "PR123-Test-PR", webUrl: "https://example.com/folder" };
+      }
       if (path.endsWith("/archive.json")) {
         return { name: "archive.json", webUrl: "https://example.com/archive" };
       }
@@ -104,6 +118,10 @@ describe("api.onedrive.archive action", () => {
     });
     onedrive.getText.mockResolvedValue(
       JSON.stringify({
+        body: "- [x] CHK-01 one\nResult: OK\nEvidence: https://example.com/a.png?b=2&a=1",
+        checklist: {
+          items: [{ line: 1, text: "CHK-01 one", checked: true }],
+        },
         evidenceImages: [
           {
             sourceUrl: "https://example.com/a.png?b=2&a=1",
@@ -119,6 +137,8 @@ describe("api.onedrive.archive action", () => {
     const body = (await response.json()) as {
       ok: true;
       found: boolean;
+      body: string;
+      checklistItems: Array<{ line: number; text: string; checked: boolean }>;
       evidenceImages: Array<{
         sourceUrl: string;
         normalizedSourceUrl: string;
@@ -131,6 +151,8 @@ describe("api.onedrive.archive action", () => {
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.found).toBe(true);
+    expect(body.body).toContain("CHK-01");
+    expect(body.checklistItems).toEqual([{ line: 1, text: "CHK-01 one", checked: true }]);
     expect(body.evidenceImages).toHaveLength(1);
     expect(body.evidenceImages[0]).toMatchObject({
       sourceUrl: "https://example.com/a.png?b=2&a=1",
@@ -164,6 +186,7 @@ describe("api.onedrive.archive action", () => {
   });
 
   it("archive.json が不正JSONの場合は専用メッセージとエラーコードで502を返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
     onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
     onedrive.getText.mockResolvedValueOnce("{invalid-json");
 
@@ -184,5 +207,421 @@ describe("api.onedrive.archive action", () => {
     );
     expect(body.errorCode).toBe("ARCHIVE_JSON_INVALID");
     expect(body.errorMessage).toBeUndefined();
+  });
+
+  it("archive.json の body が文字列でない場合は専用メッセージとエラーコードで502を返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: 123,
+        checklist: {
+          items: [{ line: 1, text: "CHK-01 one", checked: true }],
+        },
+        evidenceImages: [],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+      errorMessage?: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe(
+      "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから再取得してください。",
+    );
+    expect(body.errorCode).toBe("ARCHIVE_JSON_INVALID");
+    expect(body.errorMessage).toBeUndefined();
+  });
+
+  it("archive.json の evidenceImages に非オブジェクト要素が含まれる場合は専用メッセージとエラーコードで502を返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "- [x] CHK-01 one",
+        checklist: {
+          items: [{ line: 1, text: "CHK-01 one", checked: true }],
+        },
+        evidenceImages: [null],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+      errorMessage?: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe(
+      "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから再取得してください。",
+    );
+    expect(body.errorCode).toBe("ARCHIVE_JSON_INVALID");
+    expect(body.errorMessage).toBeUndefined();
+  });
+
+  it("archive.json の evidenceImages に型不正なプロパティが含まれる場合は専用メッセージとエラーコードで502を返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "- [x] CHK-01 one",
+        checklist: {
+          items: [{ line: 1, text: "CHK-01 one", checked: true }],
+        },
+        evidenceImages: [{ sourceUrl: 123 }],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+      errorMessage?: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe(
+      "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから再取得してください。",
+    );
+    expect(body.errorCode).toBe("ARCHIVE_JSON_INVALID");
+    expect(body.errorMessage).toBeUndefined();
+  });
+
+  it("archive.json の Evidence と imgs の対応が壊れている場合は502を返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "- [x] CHK-01 one\nResult: OK\nEvidence: https://example.com/a.png",
+        checklist: {
+          items: [{ line: 1, text: "CHK-01 one", checked: true }],
+        },
+        evidenceImages: [
+          {
+            sourceUrl: "https://example.com/a.png",
+            status: "success",
+            fileName: "a.png",
+            onedrivePath: "project/hello-world/PullRequests/PR123-Test-PR/imgs/a.png",
+          },
+        ],
+      }),
+    );
+    onedrive.getItem.mockResolvedValueOnce(null);
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.errorCode).toBe("ARCHIVE_EVIDENCE_INTEGRITY_INVALID");
+  });
+
+  it("success evidence がフォルダを指している場合は整合性エラーとして502を返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce({
+      name: "PR123-Test-PR",
+      webUrl: "https://example.com/folder",
+      isFolder: true,
+    });
+    onedrive.getItem.mockResolvedValueOnce({
+      name: "archive.json",
+      webUrl: "https://example.com/archive",
+      isFolder: false,
+    });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "- [x] CHK-01 one\nResult: OK\nEvidence: https://example.com/a.png",
+        checklist: {
+          items: [{ line: 1, text: "CHK-01 one", checked: true }],
+        },
+        evidenceImages: [
+          {
+            sourceUrl: "https://example.com/a.png",
+            status: "success",
+            fileName: "a.png",
+            onedrivePath: "project/hello-world/PullRequests/PR123-Test-PR/imgs/a.png",
+          },
+        ],
+      }),
+    );
+    onedrive.getItem.mockResolvedValueOnce({
+      name: "a.png",
+      webUrl: "https://example.com/imgs/a.png",
+      isFolder: true,
+    });
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.errorCode).toBe("ARCHIVE_EVIDENCE_INTEGRITY_INVALID");
+  });
+
+  it("Evidence URL が failed レコードで網羅されている場合は整合性エラーにしない", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "- [ ] CHK-01 one\nResult: pending\nEvidence: https://example.com/a.png",
+        checklist: {
+          items: [{ line: 1, text: "CHK-01 one", checked: false }],
+        },
+        evidenceImages: [
+          {
+            sourceUrl: "https://example.com/a.png",
+            status: "failed",
+            fileName: null,
+            onedrivePath: null,
+            webUrl: null,
+            errorReason: "download failed",
+          },
+        ],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: true;
+      found: boolean;
+      checklistItems: Array<{ line: number; text: string; checked: boolean }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.found).toBe(true);
+    expect(body.checklistItems).toEqual([{ line: 1, text: "CHK-01 one", checked: false }]);
+  });
+
+  it("Evidence が非画像URLのみの場合は整合性エラーにしない", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "- [x] CHK-01 one\nResult: OK\nEvidence: https://example.com/spec",
+        checklist: {
+          items: [{ line: 1, text: "CHK-01 one", checked: true }],
+        },
+        evidenceImages: [],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: true;
+      found: boolean;
+      checklistItems: Array<{ line: number; text: string; checked: boolean }>;
+      evidenceImages: unknown[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.found).toBe(true);
+    expect(body.checklistItems).toEqual([{ line: 1, text: "CHK-01 one", checked: true }]);
+    expect(body.evidenceImages).toEqual([]);
+  });
+
+  it("checklist item の text が空文字でも archive.json を有効として扱う", async () => {
+    onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
+    onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "- [ ] ",
+        checklist: {
+          items: [{ line: 1, text: "", checked: false }],
+        },
+        evidenceImages: [],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: true;
+      found: boolean;
+      checklistItems: Array<{ line: number; text: string; checked: boolean }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.found).toBe(true);
+    expect(body.checklistItems).toEqual([{ line: 1, text: "", checked: false }]);
+  });
+
+  it("PullRequests 配下に対象PRフォルダが無い場合は正式エラーを返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce(null);
+    onedrive.listChildren.mockResolvedValueOnce([{ name: "PR122-Old", webUrl: "https://example.com/old" }]);
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+    };
+
+    expect(response.status).toBe(404);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe("OneDrive 上に保存済みのPRデータが見つかりません。");
+    expect(body.errorCode).toBe("ARCHIVE_PR_NOT_FOUND");
+  });
+
+  it("PullRequests フォルダ自体が404の場合も正式エラーを返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce(null);
+    onedrive.listChildren.mockRejectedValueOnce({
+      status: 404,
+      message: "OneDrive API error (404) [code=itemNotFound]",
+    });
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+    };
+
+    expect(response.status).toBe(404);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe("OneDrive 上に保存済みのPRデータが見つかりません。");
+    expect(body.errorCode).toBe("ARCHIVE_PR_NOT_FOUND");
+  });
+
+  it("同じPR番号の保存フォルダが複数ある場合は409を返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce(null);
+    onedrive.listChildren.mockResolvedValueOnce([
+      { name: "PR123-OldTitle", webUrl: "https://example.com/old", isFolder: true },
+      { name: "PR123-NewTitle", webUrl: "https://example.com/new", isFolder: true },
+    ]);
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+    };
+
+    expect(response.status).toBe(409);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe(
+      "OneDrive 上に同じPR番号の保存フォルダが複数あり、表示対象を特定できません。不要なフォルダを整理してください。",
+    );
+    expect(body.errorCode).toBe("ARCHIVE_PR_FOLDER_CONFLICT");
+  });
+
+  it("GitHub取得失敗時は OneDrive プレフィックス探索へフォールバックする", async () => {
+    github.getPullRequest.mockRejectedValueOnce(new Error("not found"));
+    onedrive.listChildren.mockResolvedValueOnce([
+      { name: "PR123-Manual", webUrl: "https://example.com/folder", isFolder: true },
+    ]);
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive" };
+      }
+      return null;
+    });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "",
+        checklist: { items: [] },
+        evidenceImages: [],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: true; found: boolean };
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.found).toBe(true);
+  });
+
+  it("プレフィックス一致するファイルは競合候補に含めずフォルダを優先する", async () => {
+    github.getPullRequest.mockRejectedValueOnce(new Error("not found"));
+    onedrive.listChildren.mockResolvedValueOnce([
+      { name: "PR123-notes.txt", webUrl: "https://example.com/file", isFolder: false },
+      { name: "PR123-Manual", webUrl: "https://example.com/folder", isFolder: true },
+    ]);
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive" };
+      }
+      return null;
+    });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "",
+        checklist: { items: [] },
+        evidenceImages: [],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: true; found: boolean };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.found).toBe(true);
+  });
+
+  it("GitHub算出の優先パスに同名ファイルしか無い場合はフォルダ探索へフォールバックする", async () => {
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/PullRequests/PR123-Test-PR")) {
+        return { name: "PR123-Test-PR", webUrl: "https://example.com/file", isFolder: false };
+      }
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive", isFolder: false };
+      }
+      return null;
+    });
+    onedrive.listChildren.mockResolvedValueOnce([
+      { name: "PR123-Test-PR", webUrl: "https://example.com/file", isFolder: false },
+      { name: "PR123-ActualFolder", webUrl: "https://example.com/folder", isFolder: true },
+    ]);
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "",
+        checklist: { items: [] },
+        evidenceImages: [],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: true; found: boolean };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.found).toBe(true);
   });
 });

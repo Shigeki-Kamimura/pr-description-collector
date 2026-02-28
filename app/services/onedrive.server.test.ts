@@ -178,6 +178,87 @@ describe("onedrive service error handling", () => {
     await expect(service.getItem("missing.png")).resolves.toBeNull();
   });
 
+  it("listChildren は nameStartsWith を OData filter に変換して呼び出す", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ value: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await service.listChildren("work/project/repo/PullRequests", { nameStartsWith: "PR123-" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [requestUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(requestUrl).toContain("/children?");
+    expect(requestUrl).toContain("%24filter=startswith%28name%2C%27PR123-%27%29");
+  });
+
+  it("listChildren は不正な nameStartsWith を拒否する", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(
+      service.listChildren("work/project/repo/PullRequests", { nameStartsWith: "PR123-') or name eq '" }),
+    ).rejects.toThrow("OneDrive listChildren: nameStartsWith contains invalid characters");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("listChildren は @odata.nextLink を辿って全ページを取得する", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [{ id: "1", name: "PR123-Page1", webUrl: "https://example.com/1" }],
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/drive/root:/next-page",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [{ id: "2", name: "PR123-Page2", webUrl: "https://example.com/2" }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    const items = await service.listChildren("work/project/repo/PullRequests", { nameStartsWith: "PR123-" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(items.map((item) => item.name)).toEqual(["PR123-Page1", "PR123-Page2"]);
+    const [firstUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [secondUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(firstUrl).toContain("/children?");
+    expect(secondUrl).toBe("https://graph.microsoft.com/v1.0/me/drive/root:/next-page");
+  });
+
+  it("listChildren は Graph 以外の @odata.nextLink を拒否する", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          value: [{ id: "1", name: "PR123-Page1", webUrl: "https://example.com/1" }],
+          "@odata.nextLink": "https://evil.example.com/v1.0/me/drive/root:/next-page",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createOneDriveService({ accessToken: "token" });
+
+    await expect(
+      service.listChildren("work/project/repo/PullRequests", { nameStartsWith: "PR123-" }),
+    ).rejects.toThrow("OneDrive graphJson: absolute URL must use https://graph.microsoft.com");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("saveBinary は content-type を指定して保存する", async () => {
     const fetchMock = vi
       .fn()

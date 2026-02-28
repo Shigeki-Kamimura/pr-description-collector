@@ -10,14 +10,14 @@
 import type { ActionFunctionArgs } from "react-router";
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
-import { getHttpStatus } from "../services/http-status";
 import { isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { validatePrRefInput } from "../services/validation";
 import { verifyCsrfToken } from "../services/csrf.server";
 import { normalizeEvidenceSourceUrl } from "../services/evidence-url";
 import { signEvidenceImagePath } from "../services/evidence-image-token.server";
-import { slugifyForPath } from "../services/path-utils";
 import { mapWithConcurrencyLimit } from "../services/concurrency";
+import { extractUniqueImageUrls } from "../services/evidence-images.server";
+import { slugifyForPath } from "../services/path-utils";
 
 type ArchiveEvidenceImage = {
   sourceUrl: string;
@@ -30,10 +30,19 @@ type ArchiveEvidenceImage = {
   errorReason: string | null;
 };
 
+// archive.json の checklist.items を画面表示に渡すための最小契約。
+type ArchiveChecklistItem = {
+  line: number;
+  text: string;
+  checked: boolean;
+};
+
 export type ApiOneDriveArchiveResponse =
   | {
       ok: true;
       found: boolean;
+      body: string;
+      checklistItems: ArchiveChecklistItem[];
       evidenceImages: ArchiveEvidenceImage[];
     }
   | {
@@ -45,6 +54,9 @@ export type ApiOneDriveArchiveResponse =
     };
 
 const ARCHIVE_JSON_INVALID_ERROR_CODE = "ARCHIVE_JSON_INVALID";
+const ARCHIVE_EVIDENCE_INTEGRITY_ERROR_CODE = "ARCHIVE_EVIDENCE_INTEGRITY_INVALID";
+const ARCHIVE_PR_NOT_FOUND_ERROR_CODE = "ARCHIVE_PR_NOT_FOUND";
+const ARCHIVE_PR_FOLDER_CONFLICT_ERROR_CODE = "ARCHIVE_PR_FOLDER_CONFLICT";
 const ARCHIVE_EVIDENCE_LOOKUP_CONCURRENCY = 4;
 // archive.json の内容が不正なときに投げるエラー。クライアント側での識別用。
 class ArchiveJsonInvalidError extends Error {
@@ -55,6 +67,131 @@ class ArchiveJsonInvalidError extends Error {
     this.name = "ArchiveJsonInvalidError";
     this.errorCode = ARCHIVE_JSON_INVALID_ERROR_CODE;
   }
+}
+
+// archive.json と imgs 配下の対応が壊れているときに投げるエラー。
+class ArchiveEvidenceIntegrityError extends Error {
+  readonly errorCode: string;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "ArchiveEvidenceIntegrityError";
+    this.errorCode = ARCHIVE_EVIDENCE_INTEGRITY_ERROR_CODE;
+  }
+}
+
+// OneDrive API の 404 を「対象データ未存在」として扱える形に正規化する。
+function isOneDriveNotFoundLikeError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "status" in error) {
+    return (error as { status?: unknown }).status === 404;
+  }
+  if (error instanceof Error) {
+    return /OneDrive API error \(404\)/.test(error.message);
+  }
+  return false;
+}
+
+// archive.json.checklist.items の型ガード。
+function isChecklistItemRecord(value: unknown): value is ArchiveChecklistItem {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as { line?: unknown; text?: unknown; checked?: unknown };
+  return (
+    typeof item.line === "number" &&
+    Number.isFinite(item.line) &&
+    typeof item.text === "string" &&
+    typeof item.checked === "boolean"
+  );
+}
+// archive.json.evidenceImages の型ガード。fileName/webUrl/errorReason は null 許容で任意プロパティ。
+function isArchiveEvidenceImageRecord(
+  value: unknown,
+): value is {
+  sourceUrl?: string;
+  status?: string;
+  fileName?: string | null;
+  onedrivePath?: string | null;
+  webUrl?: string | null;
+  errorReason?: string | null;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as {
+    sourceUrl?: unknown;
+    status?: unknown;
+    fileName?: unknown;
+    onedrivePath?: unknown;
+    webUrl?: unknown;
+    errorReason?: unknown;
+  };
+  return (
+    (record.sourceUrl === undefined || typeof record.sourceUrl === "string") &&
+    (record.status === undefined || typeof record.status === "string") &&
+    (record.fileName === undefined || record.fileName === null || typeof record.fileName === "string") &&
+    (record.onedrivePath === undefined ||
+      record.onedrivePath === null ||
+      typeof record.onedrivePath === "string") &&
+    (record.webUrl === undefined || record.webUrl === null || typeof record.webUrl === "string") &&
+    (record.errorReason === undefined ||
+      record.errorReason === null ||
+      typeof record.errorReason === "string")
+  );
+}
+
+// archive.json の必須部分（body/checklist.items/evidenceImages）を検証して返す。
+function parseArchiveJson(raw: string): {
+  body: string;
+  checklistItems: ArchiveChecklistItem[];
+  evidenceImages: Array<{
+    sourceUrl?: string;
+    status?: string;
+    fileName?: string | null;
+    onedrivePath?: string | null;
+    webUrl?: string | null;
+    errorReason?: string | null;
+  }>;
+} {
+  let parsed: {
+    body?: unknown;
+    checklist?: { items?: unknown };
+    evidenceImages?: unknown;
+  };
+  try {
+    parsed = JSON.parse(raw) as {
+      body?: unknown;
+      checklist?: { items?: unknown };
+      evidenceImages?: unknown;
+    };
+  } catch {
+    throw new ArchiveJsonInvalidError();
+  }
+  if (typeof parsed.body !== "string") {
+    throw new ArchiveJsonInvalidError();
+  }
+  const body = parsed.body;
+  const rawChecklistItems = parsed.checklist?.items;
+  if (!Array.isArray(rawChecklistItems) || !rawChecklistItems.every(isChecklistItemRecord)) {
+    throw new ArchiveJsonInvalidError();
+  }
+  const rawEvidenceImages = parsed.evidenceImages;
+  if (
+    rawEvidenceImages !== undefined &&
+    (!Array.isArray(rawEvidenceImages) || !rawEvidenceImages.every(isArchiveEvidenceImageRecord))
+  ) {
+    throw new ArchiveJsonInvalidError();
+  }
+  return {
+    body,
+    checklistItems: rawChecklistItems,
+    evidenceImages: (rawEvidenceImages ?? []) as Array<{
+      sourceUrl?: string;
+      status?: string;
+      fileName?: string | null;
+      onedrivePath?: string | null;
+      webUrl?: string | null;
+      errorReason?: string | null;
+    }>,
+  };
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -78,76 +215,126 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const { owner, repo, prNumber } = validation;
-  let failureDomain: "github" | "onedrive" = "github";
   try {
-    const github = await createGitHubServiceFromEnv();
-    failureDomain = "onedrive";
     const onedrive = await createOneDriveServiceFromEnv(request);
     await onedrive.getDriveInfo();
 
-    failureDomain = "github";
-    const ref: PullRequestRef = {
-      repo: { owner, name: repo },
-      number: prNumber,
-    };
-    const pullRequest = await github.getPullRequest(ref);
-
-    failureDomain = "onedrive";
     const baseFolder = (process.env.ONEDRIVE_BASE_FOLDER ?? "project").replace(/^\/+|\/+$/g, "");
     const workFolder = (process.env.ONEDRIVE_WORK_FOLDER ?? "").replace(/^\/+|\/+$/g, "");
-    const safeTitle = slugifyForPath(pullRequest.title) || "untitled";
     const rootPrefix = workFolder ? `${workFolder}/${baseFolder}` : baseFolder;
-    const folderPath = `${rootPrefix}/${repo}/PullRequests/PR${prNumber}-${safeTitle}`;
+    const pullRequestsRoot = `${rootPrefix}/${repo}/PullRequests`;
+    let prioritizedFolderName: string | null = null;
+    try {
+      const github = await createGitHubServiceFromEnv();
+      const ref: PullRequestRef = {
+        repo: { owner, name: repo },
+        number: prNumber,
+      };
+      const pullRequest = await github.getPullRequest(ref);
+      const safeTitle = slugifyForPath(pullRequest.title) || "untitled";
+      prioritizedFolderName = `PR${prNumber}-${safeTitle}`;
+    } catch {
+      // GitHub 取得失敗時は OneDrive 側の保存済みフォルダ探索へフォールバックする。
+    }
+
+    let folderPath: string | null = null;
+    if (prioritizedFolderName) {
+      const prioritizedPath = `${pullRequestsRoot}/${prioritizedFolderName}`;
+      const prioritizedFolder = await onedrive.getItem(prioritizedPath);
+      if (prioritizedFolder?.isFolder) {
+        folderPath = prioritizedPath;
+      }
+    }
+    if (!folderPath) {
+      let candidates: Array<{ name: string; isFolder: boolean }> = [];
+      try {
+        candidates = await onedrive.listChildren(pullRequestsRoot, {
+          nameStartsWith: `PR${prNumber}-`,
+        });
+      } catch (error) {
+        if (!isOneDriveNotFoundLikeError(error)) {
+          throw error;
+        }
+      }
+      const matchedFolders = candidates.filter((item) => item.isFolder && item.name.startsWith(`PR${prNumber}-`));
+      if (matchedFolders.length > 1) {
+        return Response.json(
+          {
+            ok: false,
+            error:
+              "OneDrive 上に同じPR番号の保存フォルダが複数あり、表示対象を特定できません。不要なフォルダを整理してください。",
+            isAuthError: false,
+            errorCode: ARCHIVE_PR_FOLDER_CONFLICT_ERROR_CODE,
+            errorMessage: undefined,
+          } satisfies ApiOneDriveArchiveResponse,
+          { status: 409 },
+        );
+      }
+      const folder = matchedFolders[0];
+      if (folder) {
+        folderPath = `${pullRequestsRoot}/${folder.name}`;
+      }
+    }
+    if (!folderPath) {
+      return Response.json(
+        {
+          ok: false,
+          error: "OneDrive 上に保存済みのPRデータが見つかりません。",
+          isAuthError: false,
+          errorCode: ARCHIVE_PR_NOT_FOUND_ERROR_CODE,
+          errorMessage: undefined,
+        } satisfies ApiOneDriveArchiveResponse,
+        { status: 404 },
+      );
+    }
+
     const archivePath = `${folderPath}/archive.json`;
 
     const archiveItem = await onedrive.getItem(archivePath);
     if (!archiveItem) {
       return Response.json(
-        { ok: true, found: false, evidenceImages: [] } satisfies ApiOneDriveArchiveResponse,
-        { status: 200 },
+        {
+          ok: false,
+          error: "OneDrive 上に保存済みの archive.json が見つかりません。",
+          isAuthError: false,
+          errorCode: ARCHIVE_PR_NOT_FOUND_ERROR_CODE,
+          errorMessage: undefined,
+        } satisfies ApiOneDriveArchiveResponse,
+        { status: 404 },
       );
     }
 
     const raw = await onedrive.getText(archivePath);
-    let parsed: {
-      evidenceImages?: Array<{
-        sourceUrl?: string;
-        status?: string;
-        fileName?: string | null;
-        onedrivePath?: string | null;
-        webUrl?: string | null;
-        errorReason?: string | null;
-      }>;
-    };
-    try {
-      parsed = JSON.parse(raw) as {
-        evidenceImages?: Array<{
-          sourceUrl?: string;
-          status?: string;
-          fileName?: string | null;
-          onedrivePath?: string | null;
-          webUrl?: string | null;
-          errorReason?: string | null;
-        }>;
-      };
-    } catch {
-      throw new ArchiveJsonInvalidError();
-    }
+    const parsed = parseArchiveJson(raw);
     const evidenceImages: ArchiveEvidenceImage[] = [];
-    const webUrlLookups: Array<{ evidenceIndex: number; onedrivePath: string }> = [];
+    // sourceUrl(正規化後) の集合。本文Evidenceとの網羅性チェックに使う。
+    const evidenceRecordSources = new Set<string>();
+    // sourceUrl(正規化後) -> onedrivePath の対応。success レコードの実体確認に使う。
+    const successEvidenceBySource = new Map<string, string>();
+    const webUrlLookups: Array<{ evidenceIndex: number; onedrivePath: string; sourceUrl: string }> = [];
 
-    for (const record of parsed.evidenceImages ?? []) {
+    for (const record of parsed.evidenceImages) {
       const sourceUrl = (record.sourceUrl ?? "").trim();
       if (!sourceUrl) continue;
+      const normalizedSourceUrl = normalizeEvidenceSourceUrl(sourceUrl);
+      evidenceRecordSources.add(normalizedSourceUrl);
       const webUrl = record.webUrl ?? null;
       const onedrivePath = record.onedrivePath ?? null;
-      if (!webUrl && onedrivePath) {
-        webUrlLookups.push({ evidenceIndex: evidenceImages.length, onedrivePath });
+      const status = record.status === "success" ? "success" : "failed";
+      // success レコードは実体画像の存在を必須にし、欠落時は整合性エラーにする。
+      if (status === "success") {
+        if (!onedrivePath) {
+          throw new ArchiveEvidenceIntegrityError("Missing onedrivePath in success evidence record.");
+        }
+        successEvidenceBySource.set(normalizedSourceUrl, onedrivePath);
+        webUrlLookups.push({ evidenceIndex: evidenceImages.length, onedrivePath, sourceUrl });
+      } else if (!webUrl && onedrivePath) {
+        webUrlLookups.push({ evidenceIndex: evidenceImages.length, onedrivePath, sourceUrl });
       }
       evidenceImages.push({
         sourceUrl,
-        normalizedSourceUrl: normalizeEvidenceSourceUrl(sourceUrl),
-        status: record.status === "success" ? "success" : "failed",
+        normalizedSourceUrl,
+        status,
         fileName: record.fileName ?? null,
         onedrivePath,
         imageAccessToken: onedrivePath ? signEvidenceImagePath(onedrivePath) : null,
@@ -167,9 +354,30 @@ export async function action({ request }: ActionFunctionArgs) {
         if (settled.status === "rejected") {
           throw settled.reason;
         }
-        if (settled.value) {
-          evidenceImages[webUrlLookups[i].evidenceIndex].webUrl = settled.value.webUrl;
+        const lookupTarget = webUrlLookups[i];
+        if (!settled.value && evidenceImages[lookupTarget.evidenceIndex].status === "success") {
+          throw new ArchiveEvidenceIntegrityError(
+            `Missing imgs file for evidence source: ${lookupTarget.sourceUrl}`,
+          );
         }
+        if (settled.value) {
+          if (settled.value.isFolder && evidenceImages[lookupTarget.evidenceIndex].status === "success") {
+            throw new ArchiveEvidenceIntegrityError(
+              `Evidence path points to a folder instead of a file: ${lookupTarget.sourceUrl}`,
+            );
+          }
+          evidenceImages[lookupTarget.evidenceIndex].webUrl = settled.value.webUrl;
+        }
+      }
+    }
+    // upload 側と同一ルール（extractUniqueImageUrls）で抽出した画像URLだけを網羅性検証する。
+    const imageUrlsInBody = extractUniqueImageUrls(parsed.body);
+    for (const imageUrl of imageUrlsInBody) {
+      const normalized = normalizeEvidenceSourceUrl(imageUrl);
+      if (!evidenceRecordSources.has(normalized)) {
+        throw new ArchiveEvidenceIntegrityError(
+          `Image URL is not covered by archive evidence records: ${imageUrl}`,
+        );
       }
     }
 
@@ -177,48 +385,13 @@ export async function action({ request }: ActionFunctionArgs) {
       {
         ok: true,
         found: true,
+        body: parsed.body,
+        checklistItems: parsed.checklistItems,
         evidenceImages,
       } satisfies ApiOneDriveArchiveResponse,
       { status: 200 },
     );
   } catch (error) {
-    if (failureDomain === "github") {
-      const status = getHttpStatus(error);
-      if (status !== null) {
-        switch (status) {
-          case 401:
-            return Response.json(
-              { ok: false, error: "GitHub認証に失敗しました。トークンを確認してください。", isAuthError: false },
-              { status: 401 },
-            );
-          case 403:
-            return Response.json(
-              { ok: false, error: "アクセスが拒否されました。権限またはレート制限を確認してください。", isAuthError: false },
-              { status: 403 },
-            );
-          case 404:
-            return Response.json(
-              { ok: false, error: "指定されたPRが見つかりません。owner/repo/prNumber を確認してください。", isAuthError: false },
-              { status: 404 },
-            );
-          case 429:
-            return Response.json(
-              { ok: false, error: "レート制限のため一時的に失敗しました。しばらくしてから再実行してください。", isAuthError: false },
-              { status: 429 },
-            );
-          default:
-            return Response.json(
-              { ok: false, error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。", isAuthError: false },
-              { status: 502 },
-            );
-        }
-      }
-      return Response.json(
-        { ok: false, error: "GitHub API への接続に失敗しました。しばらくしてから再実行してください。", isAuthError: false },
-        { status: 502 },
-      );
-    }
-
     const rawMessage = error instanceof Error ? error.message : String(error);
     if (error instanceof ArchiveJsonInvalidError) {
       return Response.json(
@@ -226,6 +399,19 @@ export async function action({ request }: ActionFunctionArgs) {
           ok: false,
           error:
             "保存済みの archive.json が壊れています。OneDrive 上の archive.json を削除してから再取得してください。",
+          isAuthError: false,
+          errorCode: error.errorCode,
+          errorMessage: undefined,
+        } satisfies ApiOneDriveArchiveResponse,
+        { status: 502 },
+      );
+    }
+    if (error instanceof ArchiveEvidenceIntegrityError) {
+      return Response.json(
+        {
+          ok: false,
+          error:
+            "保存済みの archive.json と imgs 配下の画像対応が壊れています。OneDrive 上の archive.json と imgs を確認してください。",
           isAuthError: false,
           errorCode: error.errorCode,
           errorMessage: undefined,
