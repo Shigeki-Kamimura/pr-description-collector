@@ -241,7 +241,7 @@ export async function action({ request }: ActionFunctionArgs) {
     if (prioritizedFolderName) {
       const prioritizedPath = `${pullRequestsRoot}/${prioritizedFolderName}`;
       const prioritizedFolder = await onedrive.getItem(prioritizedPath);
-      if (prioritizedFolder) {
+      if (prioritizedFolder?.isFolder) {
         folderPath = prioritizedPath;
       }
     }

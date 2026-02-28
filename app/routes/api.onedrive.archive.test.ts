@@ -547,4 +547,34 @@ describe("api.onedrive.archive action", () => {
     expect(body.ok).toBe(true);
     expect(body.found).toBe(true);
   });
+
+  it("GitHub算出の優先パスに同名ファイルしか無い場合はフォルダ探索へフォールバックする", async () => {
+    onedrive.getItem.mockImplementation(async (path: string) => {
+      if (path.endsWith("/PullRequests/PR123-Test-PR")) {
+        return { name: "PR123-Test-PR", webUrl: "https://example.com/file", isFolder: false };
+      }
+      if (path.endsWith("/archive.json")) {
+        return { name: "archive.json", webUrl: "https://example.com/archive", isFolder: false };
+      }
+      return null;
+    });
+    onedrive.listChildren.mockResolvedValueOnce([
+      { name: "PR123-Test-PR", webUrl: "https://example.com/file", isFolder: false },
+      { name: "PR123-ActualFolder", webUrl: "https://example.com/folder", isFolder: true },
+    ]);
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "",
+        checklist: { items: [] },
+        evidenceImages: [],
+      }),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as { ok: true; found: boolean };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.found).toBe(true);
+  });
 });
