@@ -102,6 +102,19 @@ function isChecklistItemRecord(value: unknown): value is ArchiveChecklistItem {
     typeof item.checked === "boolean"
   );
 }
+// archive.json.evidenceImages の型ガード。fileName/webUrl/errorReason は null 許容で任意プロパティ。
+function isArchiveEvidenceImageRecord(
+  value: unknown,
+): value is {
+  sourceUrl?: string;
+  status?: string;
+  fileName?: string | null;
+  onedrivePath?: string | null;
+  webUrl?: string | null;
+  errorReason?: string | null;
+} {
+  return typeof value === "object" && value !== null;
+}
 
 // archive.json の必須部分（body/checklist.items/evidenceImages）を検証して返す。
 function parseArchiveJson(raw: string): {
@@ -139,7 +152,10 @@ function parseArchiveJson(raw: string): {
     throw new ArchiveJsonInvalidError();
   }
   const rawEvidenceImages = parsed.evidenceImages;
-  if (rawEvidenceImages !== undefined && !Array.isArray(rawEvidenceImages)) {
+  if (
+    rawEvidenceImages !== undefined &&
+    (!Array.isArray(rawEvidenceImages) || !rawEvidenceImages.every(isArchiveEvidenceImageRecord))
+  ) {
     throw new ArchiveJsonInvalidError();
   }
   return {
