@@ -148,6 +148,7 @@ Notes:
 - 一時運用でメモリ token store を使う場合のみ `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true` を明示してください。
 - `http://localhost:3000` への直アクセスは、コンテナの疎通確認用です。
 - ブラウザでの実運用確認や OneDrive OAuth は、HTTPS 終端された入口（Nginx / ingress / load balancer）配下で行ってください。
+- コンテナには `/api/health` を見る `HEALTHCHECK` を設定しています。
 
 The containerized application can be deployed to any platform that supports Docker, including:
 
