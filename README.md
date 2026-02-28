@@ -132,8 +132,18 @@ To build and run using Docker:
 docker build -t my-app .
 
 # Run the container
-docker run -p 3000:3000 my-app
+docker run \
+  -e NODE_ENV=production \
+  -e SESSION_SECRET=replace-with-a-long-random-secret \
+  -p 3000:3000 \
+  my-app
 ```
+
+Notes:
+
+- `SESSION_SECRET` は production で必須です。
+- OneDrive OAuth を production で使う場合は、永続 token store 実装が必要です。
+- 一時運用でメモリ token store を使う場合のみ `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true` を明示してください。
 
 The containerized application can be deployed to any platform that supports Docker, including:
 

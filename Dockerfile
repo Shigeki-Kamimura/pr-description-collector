@@ -15,8 +15,13 @@ WORKDIR /app
 RUN npm run build
 
 FROM node:20-alpine
-
-COPY --from=production-dependencies-env /app/node_modules /app/node_modules
-COPY --from=build-env /app/build /app/build
+ENV NODE_ENV=production
 WORKDIR /app
-CMD ["node", "./build/server/index.js"]
+
+COPY --chown=node:node --from=production-dependencies-env /app/node_modules /app/node_modules
+COPY --chown=node:node --from=build-env /app/build /app/build
+COPY --chown=node:node package*.json /app/
+
+USER node
+EXPOSE 3000
+CMD ["npm", "run", "start"]
