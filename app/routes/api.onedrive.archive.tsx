@@ -361,6 +361,11 @@ export async function action({ request }: ActionFunctionArgs) {
           );
         }
         if (settled.value) {
+          if (settled.value.isFolder && evidenceImages[lookupTarget.evidenceIndex].status === "success") {
+            throw new ArchiveEvidenceIntegrityError(
+              `Evidence path points to a folder instead of a file: ${lookupTarget.sourceUrl}`,
+            );
+          }
           evidenceImages[lookupTarget.evidenceIndex].webUrl = settled.value.webUrl;
         }
       }

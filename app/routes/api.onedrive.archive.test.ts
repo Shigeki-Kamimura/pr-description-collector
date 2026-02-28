@@ -340,6 +340,53 @@ describe("api.onedrive.archive action", () => {
     expect(body.errorCode).toBe("ARCHIVE_EVIDENCE_INTEGRITY_INVALID");
   });
 
+  it("success evidence がフォルダを指している場合は整合性エラーとして502を返す", async () => {
+    onedrive.getItem.mockResolvedValueOnce({
+      name: "PR123-Test-PR",
+      webUrl: "https://example.com/folder",
+      isFolder: true,
+    });
+    onedrive.getItem.mockResolvedValueOnce({
+      name: "archive.json",
+      webUrl: "https://example.com/archive",
+      isFolder: false,
+    });
+    onedrive.getText.mockResolvedValueOnce(
+      JSON.stringify({
+        body: "- [x] CHK-01 one\nResult: OK\nEvidence: https://example.com/a.png",
+        checklist: {
+          items: [{ line: 1, text: "CHK-01 one", checked: true }],
+        },
+        evidenceImages: [
+          {
+            sourceUrl: "https://example.com/a.png",
+            status: "success",
+            fileName: "a.png",
+            onedrivePath: "project/hello-world/PullRequests/PR123-Test-PR/imgs/a.png",
+          },
+        ],
+      }),
+    );
+    onedrive.getItem.mockResolvedValueOnce({
+      name: "a.png",
+      webUrl: "https://example.com/imgs/a.png",
+      isFolder: true,
+    });
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+      errorCode?: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.errorCode).toBe("ARCHIVE_EVIDENCE_INTEGRITY_INVALID");
+  });
+
   it("Evidence URL が failed レコードで網羅されている場合は整合性エラーにしない", async () => {
     onedrive.getItem.mockResolvedValueOnce({ name: "PR123-Test-PR", webUrl: "https://example.com/folder" });
     onedrive.getItem.mockResolvedValueOnce({ name: "archive.json", webUrl: "https://example.com/archive" });
