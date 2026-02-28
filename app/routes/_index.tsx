@@ -1,3 +1,12 @@
+/**
+ * トップ画面ルート。
+ *
+ * このファイルを用意した理由:
+ * - PR取得、チェックリスト解析、OneDrive保存/再表示を1画面で扱うため。
+ *
+ * このファイルが使われる場面:
+ * - ユーザーが owner/repo/prNumber を入力し、Get Description / Parse Checklist / Save to OneDrive を実行するとき。
+ */
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useFetcher, useLoaderData, useSearchParams } from "react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,19 +30,6 @@ import { SavingDialog } from "../components/SavingDialog";
 import { SuccessDialog } from "../components/SuccessDialog";
 import { ChecklistCard } from "../components/ChecklistCard";
 
-/**
- * ルート: /
- * この画面は仮です。後続IssueでUI強化予定。
- * この画面の責務:
- * - PR description（Markdown）の表示
- * - 「Get Description」でGitHubからPR本文を取得して表示する
- * - 「Parse Checklist」でMarkdownのチェックリストを解析して表示する
- *
- * 設計メモ:
- * - GitHub取得は fetcher（/api/collect）で実行し、ページ遷移なしで反映
- * - チェックリスト解析はこのルートの action で実行（既存フローを維持）
- */
-
 export const meta = () => [{ title: "PR Description Collector" }];
 
 type ActionData =
@@ -47,13 +43,12 @@ const FETCHER_TRANSPORT_ERROR_MESSAGE =
 const OAUTH_CALLBACK_ERROR_MESSAGE =
   "OneDrive 認証に失敗しました。Connect OneDrive から再試行してください。";
 const CSRF_ERROR_MESSAGE = "不正なリクエストです。ページを再読み込みして再試行してください。";
-// Evidence画像URLがhttp(s)で始まるURLであれば返す。それ以外はnullを返す。
 const CHECKBOX_LINE_RE = /^\s*(?:[*-]|\d+\.)\s*\[(?: |x|X)\]\s*/;
 const RESULT_LINE_RE = /^\s*Result[：:]\s*(.*)$/i;
 const EVIDENCE_LINE_RE = /^\s*Evidence[：:]\s*(.*)$/i;
 const MARKDOWN_IMAGE_URL_RE = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/i;
 const PLAIN_HTTP_URL_RE = /(https?:\/\/[^\s)]+)/i;
-// PR descriptionから、チェックリストの各行に対するResult: の内容を抽出する。
+// 各チェック項目にぶら下がる最初の Result 行だけを採用して、カード表示用に行番号で引ける形へ変換する。
 export function extractResultByChecklistLine(description: string): Record<number, string> {
   const lines = description.split(/\r?\n/);
   const resultByLine: Record<number, string> = {};
@@ -78,7 +73,7 @@ export function extractResultByChecklistLine(description: string): Record<number
 
   return resultByLine;
 }
-// チェックリストの次のチェックリストまでの行を順に見ていき、最初に見つかったEvidence: の内容を抽出する。
+// Evidence 行は Markdown 画像構文と素の URL の両方を受けるため、画面側で扱える http(s) URL だけに正規化する。
 function extractHttpUrl(value: string): string | null {
   const markdownImageMatched = value.match(MARKDOWN_IMAGE_URL_RE)?.[1];
   const plainUrlMatched = value.match(PLAIN_HTTP_URL_RE)?.[1];
@@ -92,7 +87,7 @@ function extractHttpUrl(value: string): string | null {
   }
 }
 
-// PR descriptionから、チェックリストの各行に対するEvidence画像URLを抽出する。
+// 各チェック項目に紐づく最初の Evidence 行だけを採用し、行番号ごとの画像URLマップへ変換する。
 export function extractEvidenceImageByChecklistLine(description: string): Record<number, string> {
   const lines = description.split(/\r?\n/);
   const evidenceByLine: Record<number, string> = {};
@@ -119,15 +114,14 @@ export function extractEvidenceImageByChecklistLine(description: string): Record
 
   return evidenceByLine;
 }
-// Evidence画像URLは、Markdownの画像URL形式かプレーンなHTTP URL形式で記載されることを想定している。
-// 両方に対応するため、Markdown画像URL形式を優先的に抽出し、次にプレーンなHTTP URL形式を抽出する。
+// 保存済み画像表示 API の URL は path/token の組み合わせで毎回組み立てる。
 function buildEvidenceImageApiUrl(onedrivePath: string, imageAccessToken: string): string {
   const params = new URLSearchParams({ path: onedrivePath, token: imageAccessToken });
   return `/api/onedrive/evidence-image?${params.toString()}`;
 }
 
 type ImageErrorDialogInfo = { message: string; isAuthError: boolean } | null;
-// 保存済み画像の表示に失敗した場合のエラー内容を、HTTPステータスコードからユーザー向けのメッセージと認証エラーかどうかのフラグにマッピングする。
+// 画像表示 API の失敗を、ダイアログ表示用の最小情報へ変換する。
 type UploadEvidenceSummary = {
   total: number;
   success: number;
@@ -163,16 +157,16 @@ export function mapPrimaryImageErrorToDialog(status: number): ImageErrorDialogIn
   }
 }
 
+// fetcher.data は unknown 扱いになるため、ok フラグだけを安全に読むための最小ガード。
 function isFetcherApiResponse(value: unknown): value is { ok: boolean } {
   return typeof value === "object" && value !== null && typeof (value as { ok?: unknown }).ok === "boolean";
 }
-// 保存結果のサマリーから、すべての画像の保存に失敗しているかどうかを判定する。
-// これにより、OneDrive 上の imgs フォルダ構成や権限の問題で画像が保存できていないケースを検出し、ユーザーに適切なエラーメッセージを表示できるようにする。
+// 画像が1件以上あり、かつ成功0件のときだけ「全件失敗」扱いにする。
 export function shouldShowUploadAllEvidenceFailedError(summary: UploadEvidenceSummary | null | undefined): boolean {
   if (!summary) return false;
   return summary.total > 0 && summary.success === 0 && summary.failed > 0;
 }
-// APIからのエラーは、ユーザーに画面上の注釈で表示するため、APIエラーがある場合はエラー表示用ダイアログは開かないようにする。
+// 入力不備や CSRF のような画面内で完結する失敗は除外し、archive フォールバック対象だけを通す。
 export function shouldUseArchiveChecklistFallback(data: ActionData | undefined): boolean {
   return Boolean(
     data &&
@@ -182,6 +176,7 @@ export function shouldUseArchiveChecklistFallback(data: ActionData | undefined):
   );
 }
 
+// Parse成功後/保存後/セッション確認後など、archive 再参照を試す契機を1か所に集約する。
 export function shouldAutoLookupArchive(params: {
   hasParsedSuccess: boolean;
   hasSessionStatus: boolean;
@@ -196,6 +191,7 @@ export function shouldAutoLookupArchive(params: {
   );
 }
 
+// loader では CSRF トークン払い出しだけを担当し、画面初期表示データは持たせない。
 export async function loader({ request }: LoaderFunctionArgs) {
   const { token, setCookie } = await ensureCsrfToken(request);
   return Response.json(
@@ -204,6 +200,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   );
 }
 
+// action は Parse Checklist 専用。GitHub から本文を取り直し、サーバー側で checklist へ変換する。
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const validation = validatePrRefInput(formData);

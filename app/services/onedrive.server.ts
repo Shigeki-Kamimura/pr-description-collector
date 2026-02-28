@@ -1,9 +1,11 @@
 /**
  * OneDrive連携（サーバー側）
  *
- * 現時点の前提:
- * - アクセストークンは OAuth/MSAL（onedrive-auth.server 経由）で取得する
- * - 開発用途として、環境変数からアクセストークンを渡す経路もサポートする
+ * このファイルを用意した理由:
+ * - Microsoft Graph API 呼び出しをアプリ本体から隔離し、保存/取得の境界を明確にするため。
+ *
+ * このファイルが使われる場面:
+ * - OneDrive への保存、既存 archive 参照、認証状態確認、画像取得を行うとき。
  */
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
@@ -129,8 +131,7 @@ export class OneDriveApiError extends Error {
     this.retryAfterAtIso = retryAfterAtIso;
   }
 }
-// Graph APIのエラーレスポンスを解析して、OneDriveApiErrorを構築するユーティリティ関数。
-// これにより、APIエラーの詳細情報を含む例外を一元的に生成できるようになる。
+// Graph のエラーレスポンスを OneDriveApiError に正規化し、呼び出し側で status/code を判定しやすくする。
 function buildOneDriveApiError(response: Response, responseText: string): OneDriveApiError {
   let details = "";
   let errorCode = "";
@@ -186,7 +187,7 @@ function buildOneDriveApiError(response: Response, responseText: string): OneDri
   );
 }
 
-// パスの正規化とエンコード
+// Windows/OneDrive 混在のパス表記を、Graph API へ渡せる形へ正規化する。
 function normalizeDrivePath(path: string) {
   return path
     .replace(/\\/g, "/")
@@ -195,14 +196,14 @@ function normalizeDrivePath(path: string) {
     .replace(/\/+/g, "/");
 }
 
-// パスをURLエンコード（セグメントごとに）
+// Graph の `root:/path:/...` 形式に合わせて、セグメント単位で安全にエンコードする。
 function encodeDrivePath(path: string) {
   const normalized = normalizeDrivePath(path);
   if (!normalized) return "";
   return normalized.split("/").map(encodeURIComponent).join("/");
 }
 
-// Graph APIのドライブアイテムを内部のDriveItem型に変換する
+// Graph 依存のフィールド名を、アプリ内で使う DriveItem へ閉じ込める。
 function toDriveItem(item: GraphDriveItem): DriveItem {
   return {
     id: item.id,
@@ -214,7 +215,7 @@ function toDriveItem(item: GraphDriveItem): DriveItem {
   };
 }
 
-// Graph APIを呼び出してJSONレスポンスを取得するユーティリティ
+// JSON 系の Graph 呼び出し共通化。absolute URL は nextLink 追従時だけ許可し、同一 origin に限定する。
 async function graphJson<T>(accessToken: string, pathOrUrl: string, init?: RequestInit): Promise<T> {
   let requestUrl = `${GRAPH_BASE_URL}${pathOrUrl}`;
   if (pathOrUrl.startsWith("https://") || pathOrUrl.startsWith("http://")) {
@@ -242,7 +243,7 @@ async function graphJson<T>(accessToken: string, pathOrUrl: string, init?: Reque
   return (await response.json()) as T;
 }
 
-// Graph APIを呼び出してテキストレスポンスを取得するユーティリティ
+// text/plain や markdown を取るための共通 Graph 呼び出し。
 async function graphText(accessToken: string, path: string, init?: RequestInit): Promise<string> {
   const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
     ...init,
@@ -258,7 +259,7 @@ async function graphText(accessToken: string, path: string, init?: RequestInit):
   }
   return await response.text();
 }
-// Graph APIを呼び出してバイナリレスポンスを取得するユーティリティ
+// 画像取得 API などで使うバイナリ取得共通処理。サイズ上限もここで守る。
 async function graphBytes(
   accessToken: string,
   path: string,

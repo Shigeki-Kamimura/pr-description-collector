@@ -1,19 +1,11 @@
 /**
  * /api/collect
  *
- * このルートはUIから呼び出されるサーバー側API（action）として動作し、
- * 指定された owner/repo/prNumber のPR情報をGitHub REST APIから取得して
- * 「PR本文（Markdown）」および PRメタ/レビュー情報を返す。
+ * このファイルを用意した理由:
+ * - 画面から GitHub PR 情報を取得する処理を UI から分離するため。
  *
- * 目的:
- * - UI側の「Get Description」ボタンから、PR本文をtextareaへ流し込む
- * - 後続のチェックリスト抽出/Markdown→HTML化/OneDrive保存の入力元を統一する
- * - レビュー（APPROVED有無など）をJSONで確認できるようにする
- *
- * 注意:
- * - 認証は現時点ではサーバー環境変数のトークン（GITHUB_TOKEN または GITHUB_PAT）前提
- * - GitHubへのアクセス実装は services/github.server.ts（Octokit）に閉じ込める
- * - 画像DLやupload sessionは別Issueで対応（本ルートでは扱わない）
+ * このファイルが使われる場面:
+ * - Get Description 押下時に、PR本文とレビュー情報をまとめて取得するとき。
  */
 import type { ActionFunctionArgs } from "react-router";
 
@@ -40,6 +32,7 @@ export type ApiCollectResponse =
       error: string;
     };
 
+// action は取得専用 API。PR本文とレビュー情報をまとめて返し、画面側の表示入力を統一する。
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const validation = validatePrRefInput(formData);

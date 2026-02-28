@@ -1,13 +1,11 @@
 /**
  * GitHub連携（サーバー側）
  *
- * 役割:
- * - GitHub REST APIから PR 情報（本文Markdown含む）とレビュー情報を取得する
- * - 取得結果をアプリ内の最小限の型へ正規化する
+ * このファイルを用意した理由:
+ * - GitHub REST API 呼び出しと認証方式の違いを、アプリ本体から隠蔽するため。
  *
- * 設計意図:
- * - Issue #2 の要件に合わせ、Octokitで実装する（公式クライアント）
- * - 呼び出し側は GitHubService 境界に依存し、後続の拡張（項目追加等）を容易にする
+ * このファイルが使われる場面:
+ * - PR本文、PRメタ情報、レビュー一覧を取得するとき。
  */
 
 
@@ -16,7 +14,7 @@ import { Octokit } from "octokit";
 import { createAppAuth } from "@octokit/auth-app";
 
 const DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS = 180;
-// 環境変数から秒単位のタイムアウトをミリ秒に変換して取得するユーティリティ関数
+// 秒指定の環境変数を、内部で扱うミリ秒へ安全に変換する。
 function parseTimeoutSecondsToMs(value: string | undefined, fallbackMs: number): number {
   const parsedSeconds = Number.parseInt(value ?? "", 10);
   if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) return fallbackMs;
@@ -28,7 +26,7 @@ const GITHUB_REQUEST_TIMEOUT_MS = parseTimeoutSecondsToMs(
   DEFAULT_GITHUB_REQUEST_TIMEOUT_SECONDS * 1000,
 );
 
-// GitHub APIリクエストにタイムアウトを設定するユーティリティ関数
+// Octokit 自体に統一タイムアウトを付けづらいため、各API呼び出しを外から包む。
 function withRequestTimeout<T>(
   buildPromise: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
@@ -110,6 +108,7 @@ export interface GitHubService {
   hasApprovedReview(ref: PullRequestRef): Promise<boolean>;
 }
 
+// GitHub の review state は将来増える可能性があるため、画面側では既知値だけに正規化する。
 function toReviewState(value: unknown): PullRequestReviewState {
   // Octokitの型を直接外に漏らさないために、値をホワイトリストで正規化する。
   switch (value) {
@@ -124,11 +123,13 @@ function toReviewState(value: unknown): PullRequestReviewState {
   }
 }
 
+// PAT / GITHUB_TOKEN 用の最小生成関数。認証方式の差し替え点を1か所に集約する。
 function createOctokit(auth: GitHubAuth) {
   // 現時点はトークン認証のみ（後続でAuth Code Flow等に拡張予定）
   return new Octokit({ auth: auth.token });
 }
 
+// GitHub App 認証は Installation Token 発行を含むため、非同期で Octokit を作る。
 async function createOctokitFromGitHubApp(auth: GitHubAppAuth) {
   // GitHub App の Installation Token を都度発行して Octokit を作る。
   // private repo 対応や権限最小化の観点で、PATより運用しやすい。
@@ -174,6 +175,7 @@ export async function createGitHubServiceFromEnv(): Promise<GitHubService> {
   return createGitHubServiceWithOctokit(octokit);
 }
 
+// 呼び出し側が Octokit に直接依存しないよう、アプリ専用の GitHubService に閉じ込める。
 function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
   // Octokit生成手段（PAT/GitHub Appなど）を差し替え可能にするための薄いラッパー。
   const getPullRequest = async (ref: PullRequestRef): Promise<PullRequest> => {
@@ -244,6 +246,7 @@ function createGitHubServiceWithOctokit(octokit: Octokit): GitHubService {
   };
 }
 
+// PAT 認証の public entry point。テストや将来の明示注入で使う。
 export function createGitHubService(auth: GitHubAuth): GitHubService {
   const octokit = createOctokit(auth);
   return createGitHubServiceWithOctokit(octokit);

@@ -1,12 +1,11 @@
 /**
  * /api/onedrive/upload
  *
- * 目的:
- * - GitHubからPR情報（description/reviews）を取得し、OneDriveへ保存する
- * - 画像を含むHTML生成は後続（まず保存先＝OneDriveを確立する）
+ * このファイルを用意した理由:
+ * - PR本文、checklist、evidence 画像を OneDrive へ保存する API を画面から分離するため。
  *
- * 前提:
- * - OneDrive アクセストークンは OAuth セッションを優先し、開発用途で env 指定も許可する
+ * このファイルが使われる場面:
+ * - Save to OneDrive 実行時に、GitHub取得から OneDrive 保存、失敗時ロールバックまでをまとめて処理するとき。
  */
 import type { ActionFunctionArgs } from "react-router";
 import {
@@ -30,7 +29,7 @@ import { signEvidenceImagePath } from "../services/evidence-image-token.server";
 import { slugifyForPath } from "../services/path-utils";
 import { mapWithConcurrencyLimit } from "../services/concurrency";
 
-// ルートハンドラーとビジネスロジックを分離するため、OneDrive への保存処理の詳細は services/evidence-images.server.ts に委譲する。
+// upload API が返す保存結果の最小契約。UI はこの型だけを見てダイアログや保存結果を組み立てる。
 export type ApiOneDriveUploadResponse =
   | {
       ok: true;
@@ -67,10 +66,6 @@ export type ApiOneDriveUploadResponse =
       errorMessage?: string;
     };
     
-/* OneDrive への保存処理中のエラーは、認証エラーかどうかに関わらず基本的には 502 として返す。
-// ただし、認証エラーと判断できる場合は 401 とする。
-// これにより、UI側で認証エラーとそれ以外のエラーを区別して適切なユーザーメッセージを表示できるようになる。
-*/
 type EvidenceImageStatus = "success" | "failed";
 
 type EvidenceImageRecord = {
@@ -468,10 +463,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 }
 
-/* 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定する、
-/ これらの機能を提供する関数は services/evidence-images.server.ts に切り出しているため、
-/ ここでは保存された画像のパスを収集するロジックのみを実装する
- */
+// archive.json 保存失敗時に、先に保存済みだった画像をロールバック対象として回収する。
 function collectSavedEvidencePaths(
   evidenceImages: EvidenceImageRecord[],
   writeError: unknown,
@@ -489,6 +481,7 @@ function collectSavedEvidencePaths(
   return Array.from(paths);
 }
 
+// OneDrive 保存日時は JST 固定で記録するため、Date から ISO 8601 (+09:00) を組み立てる。
 function formatIsoForJst(date: Date): string {
   const offsetMinutes = 9 * 60;
   const offsetMs = offsetMinutes * 60 * 1000;
@@ -506,15 +499,12 @@ function formatIsoForJst(date: Date): string {
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}${sign}${offsetHours}:${offsetMins}`;
 }
 
-/* 
-/ 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
-/ これらの機能を提供する関数は services/evidence-images.server.ts に切り出している。
-*/
 type EvidenceSaveDependencies = {
   saveBinary: (path: string, content: Uint8Array, contentType?: string) => Promise<{ name: string; webUrl: string }>;
   getItem: (path: string) => Promise<{ name: string; webUrl: string } | null>;
 };
 
+// evidence 保存は upload 全体の中で最も分岐が多いため、専用関数に閉じ込めて action の責務を絞る。
 async function saveEvidenceImages({
   markdown,
   folderPath,
@@ -678,6 +668,7 @@ async function saveEvidenceImages({
   return results;
 }
 
+// 環境変数が未設定でも安全側の既定値で動かす。
 function getEvidenceImageMaxBytes(): number {
   const kbRaw = process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_KB;
   const parsedKb = Number.parseInt(kbRaw ?? "", 10);
@@ -698,6 +689,7 @@ function getEvidenceImageMaxBytes(): number {
   );
 }
 
+// 画像枚数制限は保存処理の暴走防止用。未設定時は既定値を使う。
 function getEvidenceImageMaxCount(): number {
   const raw = process.env.ONEDRIVE_EVIDENCE_IMAGE_MAX_COUNT;
   const parsed = Number.parseInt(raw ?? "", 10);
@@ -705,8 +697,7 @@ function getEvidenceImageMaxCount(): number {
   return parsed;
 }
 
-// Content-Type ヘッダーから画像の拡張子を推測して、ファイル名のベース部分を生成する。
-// URLのパスから拡張子が取れる場合はそれを優先する。
+// OneDrive に保存してよい画像 MIME のみを明示的に許可する。
 function isImageContentType(contentType: string | null): boolean {
   if (!contentType) return false;
   const mime = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
@@ -719,7 +710,7 @@ function isImageContentType(contentType: string | null): boolean {
     mime === "image/avif"
   );
 }
-// 画像の拡張子を推測するための簡易マッピング。Content-Type が image/jpeg の場合は .jpg とするなど、一般的なケースをカバーする。
+// まず候補名を決め、同一保存処理内の重複と OneDrive 上の既存名を避ける。
 async function resolveEvidenceFileName({
   onedrive,
   folderPath,
@@ -745,6 +736,7 @@ async function resolveEvidenceFileName({
   return allocateLocalUniqueName(baseName, reservedNames);
 }
 
+// 同一実行内だけで使う連番採番。OneDrive 再問い合わせを増やさず局所的に一意化する。
 function allocateLocalUniqueName(baseName: string, reservedNames: Set<string>): string {
   for (let index = 1; index <= 5000; index += 1) {
     const candidate = buildIndexedFileName(baseName, index);
@@ -755,12 +747,13 @@ function allocateLocalUniqueName(baseName: string, reservedNames: Set<string>): 
   throw new Error(`Failed to allocate image filename: ${baseName}`);
 }
 
+// `image.png` -> `image-1.png` のような連番名を作る。
 function buildIndexedFileName(baseName: string, index: number): string {
   const { stem, ext } = splitFileName(baseName);
   return `${stem}-${index}${ext}`;
 }
 
-// ファイル名を拡張子とベース名に分割する。拡張子がない場合は ext を空文字列とする。
+// 拡張子を維持したまま連番採番できるように stem/ext に分解する。
 function splitFileName(fileName: string): { stem: string; ext: string } {
   const dotIndex = fileName.lastIndexOf(".");
   if (dotIndex <= 0 || dotIndex === fileName.length - 1) {
@@ -771,8 +764,7 @@ function splitFileName(fileName: string): { stem: string; ext: string } {
     ext: fileName.slice(dotIndex),
   };
 }
-// 画像URL抽出の重複排除、ダウンロード再試行、拡張子補完の契約を固定するため、
-// これらの機能を提供する関数は services/evidence-images.server.ts に切り出している。
+// UI で「成功/失敗/保存済み」を出し分けるための集計だけを返す。
 function summarizeEvidenceImages(records: EvidenceImageRecord[]): {
   total: number;
   success: number;
@@ -800,7 +792,7 @@ function summarizeEvidenceImages(records: EvidenceImageRecord[]): {
   };
 }
 
-// すでに保存されている証拠画像を、sourceUrl をキーとするマップとして読み込む。これにより、同じ画像URLが複数回出現する場合でも、最初の1回だけ保存して残りは保存済みとしてスキップできるようになる。
+// 既存 archive.json から success レコードだけを読み、再保存スキップ判定に使う。
 async function loadExistingEvidenceBySource(
   onedrive: { getText: (path: string) => Promise<string>; getItem: (path: string) => Promise<{ name: string; webUrl: string } | null> },
   archivePath: string,
@@ -871,5 +863,4 @@ async function loadExistingEvidenceBySource(
     throw error;
   }
 }
-
 
