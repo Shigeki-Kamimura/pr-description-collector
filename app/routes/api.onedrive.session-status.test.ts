@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./api.onedrive.session-status";
 import { getAccessToken } from "../services/onedrive-auth.server";
 import { createOneDriveService } from "../services/onedrive.server";
+import { OAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 
 vi.mock("../services/onedrive-auth.server", () => ({
   getAccessToken: vi.fn(),
@@ -9,6 +10,17 @@ vi.mock("../services/onedrive-auth.server", () => ({
 
 vi.mock("../services/onedrive.server", () => ({
   createOneDriveService: vi.fn(),
+}));
+
+vi.mock("../services/onedrive-oauth-session.server", () => ({
+  OAuthSessionStoreUnavailableError: class OAuthSessionStoreUnavailableError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "OAuthSessionStoreUnavailableError";
+    }
+  },
+  isOAuthSessionStoreUnavailableError: (error: unknown) =>
+    error instanceof Error && error.name === "OAuthSessionStoreUnavailableError",
 }));
 
 function buildRequest(): Request {
@@ -44,6 +56,25 @@ describe("api.onedrive.session-status loader", () => {
     expect(body.error).toBe("OneDrive セッション確認に失敗しました。しばらくしてから再実行してください。");
     expect(body.errorCode).toBeUndefined();
     expect(body.errorMessage).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("Redis障害は503で一時障害として返す", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(getAccessToken).mockRejectedValue(new OAuthSessionStoreUnavailableError("redis down"));
+
+    const response = await loader({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+    };
+
+    expect(response.status).toBe(503);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toContain("OneDrive 認証基盤で一時障害");
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });

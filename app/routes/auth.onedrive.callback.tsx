@@ -6,15 +6,22 @@
 // OAuth認可コードを受け取り、アクセストークンを取得して保存する
 import { redirect } from "react-router";
 import { isHttpsRequest } from "../services/https-validation.server";
+import { logger } from "../services/logger.server";
+import {
+  ensureOAuthSessionStoreAvailable,
+  isOAuthSessionStoreUnavailableError,
+} from "../services/onedrive-oauth-session.server";
 import {
   onedriveOAuthBindCookie, // OAuth開始時バインドCookie
   exchangeCodeForToken, // OneDrive OAuthトークン交換
   onedriveOAuthStateCookie, // OAuth状態管理用Cookie
   onedriveOAuthSessionCookie, // OAuthセッションID保持用Cookie
-  storeTokenForSession, // セッションIDに対応するトークンを保存する
+  persistTokenForSession, // セッションIDに対応するトークンを保存する
 } from "../services/onedrive-auth.server";
 
 const OAUTH_FAILED_REDIRECT_PATH = "/?onedrive=oauth_failed";
+const OAUTH_INFRASTRUCTURE_ERROR_MESSAGE =
+  "OneDrive 認証基盤で一時障害が発生しています。時間をおいて再試行してください。";
 
 async function buildOAuthFailureRedirect() {
   const headers = new Headers();
@@ -41,7 +48,7 @@ export async function loader({ request }: { request: Request }) {
 
   if (error) {
     // 詳細はサーバーログに残し、クライアントには再試行可能な定型メッセージのみ返す。
-    console.warn("OneDrive OAuth callback returned an error.", {
+    logger.warn("OneDrive OAuth callback returned an error.", {
       error,
       errorDescription,
       errorCodes,
@@ -84,18 +91,47 @@ export async function loader({ request }: { request: Request }) {
     return buildOAuthFailureRedirect();
   }
 
+  try {
+    await ensureOAuthSessionStoreAvailable();
+  } catch (error) {
+    if (isOAuthSessionStoreUnavailableError(error)) {
+      logger.error("OneDrive OAuth session store failed.", {
+        message: error.message,
+      });
+      return new Response(OAUTH_INFRASTRUCTURE_ERROR_MESSAGE, { status: 503 });
+    }
+    throw error;
+  }
+
   // コードをトークンに交換
   let tokenCache: Awaited<ReturnType<typeof exchangeCodeForToken>>;
   try {
     tokenCache = await exchangeCodeForToken(code);
   } catch (err) {
+    // トークン交換失敗の原因がセッションストア障害なのかを判別し、適切なレスポンスを返す。
+    if (isOAuthSessionStoreUnavailableError(err)) {
+      logger.error("OneDrive OAuth session store failed.", {
+        message: err.message,
+      });
+      return new Response(OAUTH_INFRASTRUCTURE_ERROR_MESSAGE, { status: 503 });
+    }
     const message = err instanceof Error ? err.message : "Unknown error";
     // token交換失敗の詳細はサーバーログのみで扱う。
-    console.error("OneDrive OAuth token exchange failed.", { message });
+    logger.error("OneDrive OAuth token exchange failed.", { message });
     return buildOAuthFailureRedirect();
   }
   const sessionId = crypto.randomUUID();
-  storeTokenForSession(sessionId, tokenCache);
+  try {
+    await persistTokenForSession(sessionId, tokenCache);
+  } catch (error) {
+    if (isOAuthSessionStoreUnavailableError(error)) {
+      logger.error("OneDrive OAuth session store failed.", {
+        message: error.message,
+      });
+      return new Response(OAUTH_INFRASTRUCTURE_ERROR_MESSAGE, { status: 503 });
+    }
+    throw error;
+  }
 
   // stateクッキーをクリアしてリダイレクト
   const headers = new Headers();

@@ -14,7 +14,9 @@ import {
   exchangeCodeForToken,
   onedriveOAuthBindCookie,
   onedriveOAuthStateCookie,
+  persistTokenForSession,
 } from "../services/onedrive-auth.server";
+import { ensureOAuthSessionStoreAvailable } from "../services/onedrive-oauth-session.server";
 
 vi.mock("../services/onedrive-auth.server", () => ({
   exchangeCodeForToken: vi.fn(),
@@ -29,7 +31,19 @@ vi.mock("../services/onedrive-auth.server", () => ({
   onedriveOAuthSessionCookie: {
     serialize: vi.fn(async () => "session=test"),
   },
-  storeTokenForSession: vi.fn(),
+  persistTokenForSession: vi.fn(),
+}));
+
+vi.mock("../services/onedrive-oauth-session.server", () => ({
+  OAuthSessionStoreUnavailableError: class OAuthSessionStoreUnavailableError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "OAuthSessionStoreUnavailableError";
+    }
+  },
+  ensureOAuthSessionStoreAvailable: vi.fn(async () => {}),
+  isOAuthSessionStoreUnavailableError: (error: unknown) =>
+    error instanceof Error && error.name === "OAuthSessionStoreUnavailableError",
 }));
 
 describe("auth.onedrive.callback loader", () => {
@@ -70,6 +84,32 @@ describe("auth.onedrive.callback loader", () => {
     const response = await loader({ request });
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("/?onedrive=oauth_failed");
+  });
+
+  it("Redis障害時は503で停止する", async () => {
+    vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("bind-a.nonce-1");
+    vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("bind-a");
+    vi.mocked(ensureOAuthSessionStoreAvailable).mockRejectedValue(
+      new (class OAuthSessionStoreUnavailableError extends Error {
+        constructor() {
+          super("redis down");
+          this.name = "OAuthSessionStoreUnavailableError";
+        }
+      })(),
+    );
+
+    const request = new Request(
+      "https://localhost:5173/auth/onedrive/callback?code=test-code&state=bind-a.nonce-1",
+      { headers: { Cookie: "onedrive_oauth_state=stub; onedrive_oauth_bind=stub" } },
+    );
+
+    const response = await loader({ request });
+    const body = await response.text();
+
+    expect(response.status).toBe(503);
+    expect(body).toContain("OneDrive 認証基盤で一時障害");
+    expect(exchangeCodeForToken).not.toHaveBeenCalled();
+    expect(persistTokenForSession).not.toHaveBeenCalled();
   });
 
   it("stateとbind cookieの整合が取れない場合はトップへ戻す", async () => {

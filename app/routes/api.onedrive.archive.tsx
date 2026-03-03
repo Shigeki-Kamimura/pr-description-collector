@@ -9,10 +9,12 @@
  */
 import type { ActionFunctionArgs } from "react-router";
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
+import { logger } from "../services/logger.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
 import { isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { validatePrRefInput } from "../services/validation";
 import { verifyCsrfToken } from "../services/csrf.server";
+import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { normalizeEvidenceSourceUrl } from "../services/evidence-url";
 import { signEvidenceImagePath } from "../services/evidence-image-token.server";
 import { mapWithConcurrencyLimit } from "../services/concurrency";
@@ -392,6 +394,21 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
+    if (isOAuthSessionStoreUnavailableError(error)) {
+      logger.error("OneDrive archive fetch failed due to session store outage.", {
+        message: error.message,
+      });
+      return Response.json(
+        {
+          ok: false,
+          error: "OneDrive 認証基盤で一時障害が発生しています。時間をおいて再試行してください。",
+          isAuthError: false,
+          errorCode: undefined,
+          errorMessage: undefined,
+        } satisfies ApiOneDriveArchiveResponse,
+        { status: 503 },
+      );
+    }
     const rawMessage = error instanceof Error ? error.message : String(error);
     if (error instanceof ArchiveJsonInvalidError) {
       return Response.json(

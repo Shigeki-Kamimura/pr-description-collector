@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { action } from "./api.onedrive.archive";
 import { createGitHubServiceFromEnv } from "../services/github.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
+import { OAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { validatePrRefInput } from "../services/validation";
 import { verifyCsrfToken } from "../services/csrf.server";
 
@@ -207,6 +208,27 @@ describe("api.onedrive.archive action", () => {
     );
     expect(body.errorCode).toBe("ARCHIVE_JSON_INVALID");
     expect(body.errorMessage).toBeUndefined();
+  });
+
+  it("Redis障害は503で返し、archive取得へ進まない", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    onedrive.getDriveInfo.mockRejectedValue(new OAuthSessionStoreUnavailableError("redis down"));
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      error: string;
+      isAuthError: boolean;
+    };
+
+    expect(response.status).toBe(503);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toContain("OneDrive 認証基盤で一時障害");
+    expect(github.getPullRequest).not.toHaveBeenCalled();
+    expect(onedrive.getItem).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("archive.json の body が文字列でない場合は専用メッセージとエラーコードで502を返す", async () => {
