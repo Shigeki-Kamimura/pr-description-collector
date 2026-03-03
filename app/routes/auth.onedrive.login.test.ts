@@ -25,6 +25,7 @@ describe("auth.onedrive.login loader", () => {
   });
 
   it("Redis障害時は503で停止する", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { ensureOAuthSessionStoreAvailable } = await import("../services/onedrive-oauth-session.server");
     vi.mocked(ensureOAuthSessionStoreAvailable).mockRejectedValue(
       new (class OAuthSessionStoreUnavailableError extends Error {
@@ -41,5 +42,7 @@ describe("auth.onedrive.login loader", () => {
 
     expect(response.status).toBe(503);
     expect(body).toContain("OneDrive 認証基盤で一時障害");
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });
