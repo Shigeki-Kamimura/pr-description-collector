@@ -2,6 +2,7 @@ import { type RouteConfig, index, route } from "@react-router/dev/routes";
 
 export default [
   index("routes/_index.tsx"), // ホームページ
+  route("api/health", "routes/api.health.tsx"), // ヘルスチェックAPI
   route("api/collect", "routes/api.collect.tsx"), // GitHub PR情報収集API
   route("api/onedrive/upload", "routes/api.onedrive.upload.tsx"), // OneDriveアップロードAPI
   route("api/onedrive/archive", "routes/api.onedrive.archive.tsx"), // OneDrive archive.json 取得API
