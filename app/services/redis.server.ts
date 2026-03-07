@@ -27,6 +27,10 @@ type RedisEndpoint = {
 
 // 今回使う RESP の最小表現。bulk string / integer / array だけ扱えれば必要コマンドを解釈できる。
 type RespValue = string | null | number | RespValue[];
+const SOCKET_CONNECT_PHASE_ERROR = Symbol("socket-connect-phase-error");
+type SocketWithConnectPhaseError = (Socket | TLSSocket) & {
+  [SOCKET_CONNECT_PHASE_ERROR]?: Error;
+};
 
 // Redis の RESP 応答を逐次パースし、ソケットの chunk 分割を吸収する。
 class RespParser {
@@ -160,8 +164,8 @@ function getRedisEndpoint(): RedisEndpoint | null {
       return parsedPort;
     })(),
     db,
-    username: url.username ? decodeURIComponent(url.username) : null,
-    password: url.password ? decodeURIComponent(url.password) : null,
+    username: url.username || null,
+    password: url.password || null,
     tls: url.protocol === "rediss:",
   };
 }
@@ -200,10 +204,17 @@ function openSocket(endpoint: RedisEndpoint, timeoutMs: number): Promise<Socket 
       callback();
     };
     const onError = (error: Error) => {
-      settle(() => {
-        socket.destroy();
-        reject(error);
-      });
+      if (!settled) {
+        settle(() => {
+          socket.destroy();
+          reject(error);
+        });
+        return;
+      }
+      // connect 完了直後に飛ぶ error は runSequence 側へ即伝搬できるよう保持する。
+      const socketWithError = socket as SocketWithConnectPhaseError;
+      socketWithError[SOCKET_CONNECT_PHASE_ERROR] = error;
+      socket.destroy();
     };
     const onConnect = () => {
       settle(() => {
@@ -254,6 +265,10 @@ async function runSequence(sequence: string[][]): Promise<RespValue[]> {
   commands.push(...sequence);
 
   const socket = await openSocket(endpoint, timeoutMs);
+  const connectPhaseError = (socket as SocketWithConnectPhaseError)[SOCKET_CONNECT_PHASE_ERROR];
+  if (connectPhaseError) {
+    throw connectPhaseError;
+  }
   const parser = new RespParser();
   const values: RespValue[] = [];
 

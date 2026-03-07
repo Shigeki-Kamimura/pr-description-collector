@@ -135,14 +135,10 @@ describe("redis.server timeout cleanup", () => {
     expect(mockSocketState.sockets[0].endedByTest).toBe(false);
   });
 
-  it("connect直後の同期errorでも未処理errorでクラッシュせずに失敗を返す", async () => {
+  it("connect直後の同期errorは timeout まで待たずに即失敗する", async () => {
     mockSocketState.mode = "post-connect-sync-error";
 
-    const promise = redisPing();
-    const rejection = expect(promise).rejects.toThrow("Redis command timed out after 10ms");
-    await vi.advanceTimersByTimeAsync(10);
-
-    await rejection;
+    await expect(redisPing()).rejects.toThrow("ECONNRESET after connect");
     expect(mockSocketState.sockets).toHaveLength(1);
     expect(mockSocketState.sockets[0].destroyedByTest).toBe(true);
   });
@@ -152,5 +148,19 @@ describe("redis.server timeout cleanup", () => {
 
     await expect(redisPing()).rejects.toThrow("REDIS_URL port is invalid. Use an integer between 1 and 65535.");
     expect(mockSocketState.sockets).toHaveLength(0);
+  });
+
+  it("password に % が含まれても URIError にならず接続処理へ進む", async () => {
+    mockSocketState.mode = "command-timeout";
+    process.env.REDIS_URL = "redis://user:pa%ss@localhost:6379/0";
+
+    const promise = redisPing();
+    const rejection = expect(promise).rejects.toThrow("Redis command timed out after 10ms");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await rejection;
+    expect(mockSocketState.sockets).toHaveLength(1);
+    expect(mockSocketState.sockets[0].destroyedByTest).toBe(true);
   });
 });
