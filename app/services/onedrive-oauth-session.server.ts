@@ -165,6 +165,16 @@ async function getRefreshFailure(sessionId: string): Promise<string | null> {
   }
 }
 
+// stale refresh failure 誤検知を避けるため、follower は lock の有無も参照して確定失敗か判定する。
+async function hasActiveRefreshLock(sessionId: string): Promise<boolean> {
+  try {
+    const lockToken = await redisGet(toRefreshLockKey(sessionId));
+    return Boolean(lockToken);
+  } catch (error) {
+    throw toStoreUnavailableError("read-refresh-lock", error);
+  }
+}
+
 export type RefreshOutcome =
   | { kind: "token"; token: TokenCache }
   | { kind: "error"; message: string };
@@ -180,7 +190,9 @@ export async function waitForRefreshOutcome(sessionId: string, waitMs: number): 
 
     const refreshFailure = await getRefreshFailure(sessionId);
     if (refreshFailure) {
-      return { kind: "error", message: refreshFailure };
+      if (!(await hasActiveRefreshLock(sessionId))) {
+        return { kind: "error", message: refreshFailure };
+      }
     }
 
     await sleep(REFRESH_LOCK_POLL_MS);

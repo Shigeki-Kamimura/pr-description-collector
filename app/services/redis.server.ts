@@ -179,9 +179,10 @@ function openSocket(endpoint: RedisEndpoint, timeoutMs: number): Promise<Socket 
       ? connectTls({ host: endpoint.host, port: endpoint.port, servername: endpoint.host })
       : new Socket();
     const connectEventName = endpoint.tls ? "secureConnect" : "connect";
+    // connect 完了直後の一瞬で error が飛んでも未処理化しないよう、常駐ガードを置く。
+    const onErrorGuard = () => {};
     const cleanup = () => {
       clearTimeout(timer);
-      socket.off("error", onError);
       socket.off(connectEventName, onConnect);
       socket.off("close", onClose);
     };
@@ -214,6 +215,7 @@ function openSocket(endpoint: RedisEndpoint, timeoutMs: number): Promise<Socket 
       });
     }, timeoutMs);
 
+    socket.on("error", onErrorGuard);
     socket.once("error", onError);
     socket.once(connectEventName, onConnect);
     socket.once("close", onClose);

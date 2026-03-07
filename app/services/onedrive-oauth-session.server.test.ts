@@ -16,7 +16,11 @@ const { redisMockState } = vi.hoisted(() => ({
     probeReadValueOverride: null as string | null,
     probeStoredValue: null as string | null,
     probeWriteError: null as Error | null,
+    sessionRawValue: null as string | null,
+    refreshFailureValue: null as string | null,
+    refreshLockValue: null as string | null,
     refreshFailureReadError: null as Error | null,
+    refreshLockReadError: null as Error | null,
   },
 }));
 
@@ -41,8 +45,20 @@ vi.mock("./redis.server", () => ({
     if (key.startsWith("onedrive:probe:")) {
       return redisMockState.probeReadValueOverride ?? redisMockState.probeStoredValue;
     }
+    if (key.startsWith("onedrive:session:")) {
+      return redisMockState.sessionRawValue;
+    }
     if (key.startsWith("onedrive:refresh-failure:") && redisMockState.refreshFailureReadError) {
       throw redisMockState.refreshFailureReadError;
+    }
+    if (key.startsWith("onedrive:refresh-failure:")) {
+      return redisMockState.refreshFailureValue;
+    }
+    if (key.startsWith("onedrive:refresh-lock:") && redisMockState.refreshLockReadError) {
+      throw redisMockState.refreshLockReadError;
+    }
+    if (key.startsWith("onedrive:refresh-lock:")) {
+      return redisMockState.refreshLockValue;
     }
     return null;
   }),
@@ -60,7 +76,11 @@ describe("onedrive-oauth-session", () => {
     redisMockState.probeReadValueOverride = null;
     redisMockState.probeStoredValue = null;
     redisMockState.probeWriteError = null;
+    redisMockState.sessionRawValue = null;
+    redisMockState.refreshFailureValue = null;
+    redisMockState.refreshLockValue = null;
     redisMockState.refreshFailureReadError = null;
+    redisMockState.refreshLockReadError = null;
   });
 
   it("session store preflight は write/read/delete probe を通す", async () => {
@@ -104,6 +124,31 @@ describe("onedrive-oauth-session", () => {
       expect((error as Error).message).toContain("Redis session store read-refresh-failure failed");
       expect((error as Error).message).toContain("redis timed out");
       return true;
+    });
+  });
+
+  it("lock 存在中の stale refresh failure では即失敗せず、成功 token を優先する", async () => {
+    const sessionId = "session-stale-failure";
+    redisMockState.refreshFailureValue = "stale failure";
+    redisMockState.refreshLockValue = "lock-token";
+
+    setTimeout(() => {
+      redisMockState.sessionRawValue = JSON.stringify({
+        accessToken: "new-access-token",
+        refreshToken: "refresh-token-2",
+        expiresAt: Date.now() + 60_000,
+      });
+      redisMockState.refreshFailureValue = null;
+      redisMockState.refreshLockValue = null;
+    }, 20);
+
+    await expect(waitForRefreshOutcome(sessionId, 500)).resolves.toEqual({
+      kind: "token",
+      token: {
+        accessToken: "new-access-token",
+        refreshToken: "refresh-token-2",
+        expiresAt: expect.any(Number),
+      },
     });
   });
 });

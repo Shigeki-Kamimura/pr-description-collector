@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockSocketState } = vi.hoisted(() => ({
   mockSocketState: {
-    mode: "connect-timeout" as "connect-timeout" | "command-timeout",
+    mode: "connect-timeout" as "connect-timeout" | "command-timeout" | "post-connect-sync-error",
     sockets: [] as Array<{ destroyedByTest: boolean; endedByTest: boolean }>,
   },
 }));
@@ -32,6 +32,9 @@ vi.mock("node:net", async () => {
         setTimeout(() => {
           this.emit("connect");
         }, 0);
+      } else if (mockSocketState.mode === "post-connect-sync-error") {
+        this.emit("connect");
+        this.emit("error", new Error("ECONNRESET after connect"));
       }
       return this;
     }
@@ -130,5 +133,17 @@ describe("redis.server timeout cleanup", () => {
     expect(mockSocketState.sockets).toHaveLength(1);
     expect(mockSocketState.sockets[0].destroyedByTest).toBe(true);
     expect(mockSocketState.sockets[0].endedByTest).toBe(false);
+  });
+
+  it("connect直後の同期errorでも未処理errorでクラッシュせずに失敗を返す", async () => {
+    mockSocketState.mode = "post-connect-sync-error";
+
+    const promise = redisPing();
+    const rejection = expect(promise).rejects.toThrow("Redis command timed out after 10ms");
+    await vi.advanceTimersByTimeAsync(10);
+
+    await rejection;
+    expect(mockSocketState.sockets).toHaveLength(1);
+    expect(mockSocketState.sockets[0].destroyedByTest).toBe(true);
   });
 });
