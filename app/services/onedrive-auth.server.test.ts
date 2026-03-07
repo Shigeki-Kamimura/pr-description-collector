@@ -15,6 +15,11 @@ const { mockTryAcquireRefreshLock } = vi.hoisted(() => ({
     return `lock-${sessionId}`;
   }),
 }));
+const { mockReleaseRefreshLock } = vi.hoisted(() => ({
+  mockReleaseRefreshLock: vi.fn(async (sessionId: string) => {
+    mockRefreshLocks.delete(sessionId);
+  }),
+}));
 
 vi.mock("./onedrive-oauth-session.server", () => ({
   OAuthSessionStoreUnavailableError: class OAuthSessionStoreUnavailableError extends Error {},
@@ -34,9 +39,7 @@ vi.mock("./onedrive-oauth-session.server", () => ({
     mockRefreshFailures.set(sessionId, message);
   }),
   tryAcquireRefreshLock: mockTryAcquireRefreshLock,
-  releaseRefreshLock: vi.fn(async (sessionId: string) => {
-    mockRefreshLocks.delete(sessionId);
-  }),
+  releaseRefreshLock: mockReleaseRefreshLock,
   waitForRefreshOutcome: vi.fn(async (sessionId: string) => {
     for (let attempt = 0; attempt < 30; attempt++) {
       const token = mockSessionStore.get(sessionId) ?? null;
@@ -72,6 +75,7 @@ describe("onedrive-auth refresh single-flight", () => {
     mockRefreshLocks.clear();
     mockRefreshFailures.clear();
     mockTryAcquireRefreshLock.mockClear();
+    mockReleaseRefreshLock.mockClear();
     delete process.env.REDIS_URL;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -180,5 +184,36 @@ describe("onedrive-auth refresh single-flight", () => {
     await expect(tokenPromise1).rejects.toThrow(/timed out after \d+ms/);
     await expect(tokenPromise2).rejects.toThrow(/timed out after \d+ms/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("unlock が失敗しても refresh 成功結果を返す", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    await persistTokenForSession(sessionId, {
+      accessToken: "expired-access",
+      refreshToken: "refresh-token-1",
+      expiresAt: Date.now() - 1000,
+    });
+    vi.spyOn(onedriveOAuthSessionCookie, "parse").mockResolvedValue(sessionId as never);
+    const request = {
+      headers: { get: (name: string) => (name.toLowerCase() === "cookie" ? "onedrive_oauth_session=stub" : null) },
+    } as Request;
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: "new-access-token-after-unlock-failure",
+          refresh_token: "refresh-token-2",
+          expires_in: 3600,
+          token_type: "Bearer",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    mockReleaseRefreshLock.mockRejectedValueOnce(new Error("redis timeout on unlock"));
+
+    await expect(getAccessToken(request)).resolves.toBe("new-access-token-after-unlock-failure");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mockSessionStore.get(sessionId)?.accessToken).toBe("new-access-token-after-unlock-failure");
   });
 });

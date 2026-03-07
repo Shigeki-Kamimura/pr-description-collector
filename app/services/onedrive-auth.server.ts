@@ -19,6 +19,7 @@ import {
   waitForRefreshOutcome,
 } from "./onedrive-oauth-session.server";
 import type { TokenCache } from "./onedrive-oauth-session.server";
+import { logger } from "./logger.server";
 import { resolvedSessionSecret } from "./session-secret.server";
 
 const AUTH_BASE_URL = "https://login.microsoftonline.com";
@@ -235,7 +236,15 @@ async function refreshAccessTokenForSession(sessionId: string, refreshToken: str
       }
       throw error;
     } finally {
-      await releaseRefreshLock(sessionId, lockToken);
+      try {
+        await releaseRefreshLock(sessionId, lockToken);
+      } catch (error) {
+        // unlock 失敗は可用性優先でベストエフォート化し、成功済み refresh 結果は維持する。
+        logger.warn("Failed to release OneDrive refresh lock.", {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
