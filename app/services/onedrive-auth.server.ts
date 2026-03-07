@@ -232,7 +232,15 @@ async function refreshAccessTokenForSession(sessionId: string, refreshToken: str
     } catch (error) {
       if (!(error instanceof OAuthSessionStoreUnavailableError)) {
         const message = error instanceof Error ? error.message : String(error);
-        await storeRefreshFailure(sessionId, message, REFRESH_FAILURE_TTL_SECONDS);
+        try {
+          await storeRefreshFailure(sessionId, message, REFRESH_FAILURE_TTL_SECONDS);
+        } catch (storeError) {
+          // failure 共有の保存はベストエフォート。元の refresh 失敗理由を優先する。
+          logger.warn("Failed to store OneDrive refresh failure.", {
+            sessionId,
+            error: storeError instanceof Error ? storeError.message : String(storeError),
+          });
+        }
       }
       throw error;
     } finally {

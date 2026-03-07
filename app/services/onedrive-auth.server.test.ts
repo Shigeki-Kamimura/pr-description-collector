@@ -20,6 +20,11 @@ const { mockReleaseRefreshLock } = vi.hoisted(() => ({
     mockRefreshLocks.delete(sessionId);
   }),
 }));
+const { mockStoreRefreshFailure } = vi.hoisted(() => ({
+  mockStoreRefreshFailure: vi.fn(async (sessionId: string, message: string) => {
+    mockRefreshFailures.set(sessionId, message);
+  }),
+}));
 
 vi.mock("./onedrive-oauth-session.server", () => ({
   OAuthSessionStoreUnavailableError: class OAuthSessionStoreUnavailableError extends Error {},
@@ -35,9 +40,7 @@ vi.mock("./onedrive-oauth-session.server", () => ({
   clearRefreshFailure: vi.fn(async (sessionId: string) => {
     mockRefreshFailures.delete(sessionId);
   }),
-  storeRefreshFailure: vi.fn(async (sessionId: string, message: string) => {
-    mockRefreshFailures.set(sessionId, message);
-  }),
+  storeRefreshFailure: mockStoreRefreshFailure,
   tryAcquireRefreshLock: mockTryAcquireRefreshLock,
   releaseRefreshLock: mockReleaseRefreshLock,
   waitForRefreshOutcome: vi.fn(async (sessionId: string) => {
@@ -76,6 +79,7 @@ describe("onedrive-auth refresh single-flight", () => {
     mockRefreshFailures.clear();
     mockTryAcquireRefreshLock.mockClear();
     mockReleaseRefreshLock.mockClear();
+    mockStoreRefreshFailure.mockClear();
     delete process.env.REDIS_URL;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -215,5 +219,28 @@ describe("onedrive-auth refresh single-flight", () => {
     await expect(getAccessToken(request)).resolves.toBe("new-access-token-after-unlock-failure");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mockSessionStore.get(sessionId)?.accessToken).toBe("new-access-token-after-unlock-failure");
+  });
+
+  it("refreshFailure 保存が失敗しても元の refresh エラーを返す", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    await persistTokenForSession(sessionId, {
+      accessToken: "expired-access",
+      refreshToken: "refresh-token-1",
+      expiresAt: Date.now() - 1000,
+    });
+    vi.spyOn(onedriveOAuthSessionCookie, "parse").mockResolvedValue(sessionId as never);
+    const request = {
+      headers: { get: (name: string) => (name.toLowerCase() === "cookie" ? "onedrive_oauth_session=stub" : null) },
+    } as Request;
+
+    const fetchMock = vi.fn().mockImplementationOnce((_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.signal).toBeDefined();
+      return Promise.reject(new DOMException("timed out", "TimeoutError"));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    mockStoreRefreshFailure.mockRejectedValueOnce(new Error("redis write timed out"));
+
+    await expect(getAccessToken(request)).rejects.toThrow(/timed out after \d+ms/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
