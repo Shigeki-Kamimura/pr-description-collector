@@ -22,12 +22,21 @@ import {
 const OAUTH_FAILED_REDIRECT_PATH = "/?onedrive=oauth_failed";
 const OAUTH_INFRASTRUCTURE_ERROR_MESSAGE =
   "OneDrive 認証基盤で一時障害が発生しています。時間をおいて再試行してください。";
+const OAUTH_PERSIST_FAILED_AFTER_EXCHANGE_MESSAGE =
+  "OneDrive 認証情報の保存に失敗しました。Connect OneDrive から認証をやり直してください（authorization code は再利用できない可能性があります）。";
 
 async function buildOAuthFailureRedirect() {
   const headers = new Headers();
   headers.append("Set-Cookie", await onedriveOAuthStateCookie.serialize("", { maxAge: 0 }));
   headers.append("Set-Cookie", await onedriveOAuthBindCookie.serialize("", { maxAge: 0 }));
   return redirect(OAUTH_FAILED_REDIRECT_PATH, { headers });
+}
+
+async function buildOAuthInfrastructureErrorResponse(message: string) {
+  const headers = new Headers();
+  headers.append("Set-Cookie", await onedriveOAuthStateCookie.serialize("", { maxAge: 0 }));
+  headers.append("Set-Cookie", await onedriveOAuthBindCookie.serialize("", { maxAge: 0 }));
+  return new Response(message, { status: 503, headers });
 }
 
 // コールバックURLのローダー
@@ -128,7 +137,7 @@ export async function loader({ request }: { request: Request }) {
       logger.error("OneDrive OAuth session store failed.", {
         message: error.message,
       });
-      return new Response(OAUTH_INFRASTRUCTURE_ERROR_MESSAGE, { status: 503 });
+      return buildOAuthInfrastructureErrorResponse(OAUTH_PERSIST_FAILED_AFTER_EXCHANGE_MESSAGE);
     }
     throw error;
   }

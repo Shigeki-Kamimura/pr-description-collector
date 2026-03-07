@@ -140,4 +140,38 @@ describe("auth.onedrive.callback loader", () => {
     expect(response.headers.get("Location")).toBe("/?onedrive=oauth_failed");
     expect(exchangeCodeForToken).not.toHaveBeenCalled();
   });
+
+  it("token保存失敗時は再認証案内の503を返し、state/bind cookie をクリアする", async () => {
+    vi.mocked(ensureOAuthSessionStoreAvailable).mockResolvedValue(undefined);
+    vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("bind-a.nonce-1");
+    vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("bind-a");
+    vi.mocked(exchangeCodeForToken).mockResolvedValue({
+      accessToken: "access-token-1",
+      refreshToken: "refresh-token-1",
+      expiresAt: Date.now() + 60_000,
+    });
+    vi.mocked(persistTokenForSession).mockRejectedValue(
+      new (class OAuthSessionStoreUnavailableError extends Error {
+        constructor() {
+          super("redis down on persist");
+          this.name = "OAuthSessionStoreUnavailableError";
+        }
+      })(),
+    );
+
+    const request = new Request(
+      "https://localhost:5173/auth/onedrive/callback?code=test-code&state=bind-a.nonce-1",
+      { headers: { Cookie: "onedrive_oauth_state=stub; onedrive_oauth_bind=stub" } },
+    );
+
+    const response = await loader({ request });
+    const body = await response.text();
+
+    expect(response.status).toBe(503);
+    expect(body).toContain("Connect OneDrive から認証をやり直してください");
+    expect(exchangeCodeForToken).toHaveBeenCalledTimes(1);
+    expect(persistTokenForSession).toHaveBeenCalledTimes(1);
+    expect(onedriveOAuthStateCookie.serialize).toHaveBeenCalledWith("", { maxAge: 0 });
+    expect(onedriveOAuthBindCookie.serialize).toHaveBeenCalledWith("", { maxAge: 0 });
+  });
 });
