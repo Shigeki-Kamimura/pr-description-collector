@@ -21,6 +21,9 @@ const { redisMockState } = vi.hoisted(() => ({
     refreshLockValue: null as string | null,
     refreshFailureReadError: null as Error | null,
     refreshLockReadError: null as Error | null,
+    sessionReadError: null as Error | null,
+    sessionDeleteError: null as Error | null,
+    deletedSessionKeys: [] as string[],
     redisGetCallCount: 0,
   },
 }));
@@ -31,6 +34,13 @@ vi.mock("./redis.server", () => ({
     if (key.startsWith("onedrive:probe:")) {
       redisMockState.deletedProbeKeys.push(key);
       redisMockState.probeStoredValue = null;
+    }
+    if (key.startsWith("onedrive:session:")) {
+      if (redisMockState.sessionDeleteError) {
+        throw redisMockState.sessionDeleteError;
+      }
+      redisMockState.deletedSessionKeys.push(key);
+      redisMockState.sessionRawValue = null;
     }
   }),
   redisSetEx: vi.fn(async (key: string, value: string) => {
@@ -48,6 +58,9 @@ vi.mock("./redis.server", () => ({
       return redisMockState.probeReadValueOverride ?? redisMockState.probeStoredValue;
     }
     if (key.startsWith("onedrive:session:")) {
+      if (redisMockState.sessionReadError) {
+        throw redisMockState.sessionReadError;
+      }
       return redisMockState.sessionRawValue;
     }
     if (key.startsWith("onedrive:refresh-failure:") && redisMockState.refreshFailureReadError) {
@@ -68,6 +81,7 @@ vi.mock("./redis.server", () => ({
 
 import {
   ensureOAuthSessionStoreAvailable,
+  getTokenForSession,
   isOAuthSessionStoreUnavailableError,
   waitForRefreshOutcome,
 } from "./onedrive-oauth-session.server";
@@ -83,6 +97,9 @@ describe("onedrive-oauth-session", () => {
     redisMockState.refreshLockValue = null;
     redisMockState.refreshFailureReadError = null;
     redisMockState.refreshLockReadError = null;
+    redisMockState.sessionReadError = null;
+    redisMockState.sessionDeleteError = null;
+    redisMockState.deletedSessionKeys.length = 0;
     redisMockState.redisGetCallCount = 0;
   });
 
@@ -165,5 +182,37 @@ describe("onedrive-oauth-session", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("session JSON 破損は 503 ではなく null を返し、破損キーを削除する", async () => {
+    redisMockState.sessionRawValue = "{broken-json";
+    await expect(getTokenForSession("session-corrupted-json")).resolves.toBeNull();
+    expect(redisMockState.deletedSessionKeys).toContain("onedrive:session:session-corrupted-json");
+  });
+
+  it("session 値が型不整合なら null を返し、破損キーを削除する", async () => {
+    redisMockState.sessionRawValue = JSON.stringify({
+      accessToken: 123,
+      refreshToken: "refresh-token-1",
+      expiresAt: Date.now() + 60_000,
+    });
+    await expect(getTokenForSession("session-invalid-shape")).resolves.toBeNull();
+    expect(redisMockState.deletedSessionKeys).toContain("onedrive:session:session-invalid-shape");
+  });
+
+  it("破損セッション削除が失敗しても null を返す", async () => {
+    redisMockState.sessionRawValue = "{broken-json";
+    redisMockState.sessionDeleteError = new Error("delete failed");
+    await expect(getTokenForSession("session-delete-failed")).resolves.toBeNull();
+  });
+
+  it("session read の Redis 障害だけを専用エラーに正規化する", async () => {
+    redisMockState.sessionReadError = new Error("redis read timed out");
+    await expect(getTokenForSession("session-read-error")).rejects.toSatisfy((error: unknown) => {
+      expect(isOAuthSessionStoreUnavailableError(error)).toBe(true);
+      expect((error as Error).message).toContain("Redis session store read failed");
+      expect((error as Error).message).toContain("redis read timed out");
+      return true;
+    });
   });
 });

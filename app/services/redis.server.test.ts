@@ -146,4 +146,11 @@ describe("redis.server timeout cleanup", () => {
     expect(mockSocketState.sockets).toHaveLength(1);
     expect(mockSocketState.sockets[0].destroyedByTest).toBe(true);
   });
+
+  it("REDIS_URL の port が範囲外なら明確な設定エラーを返す", async () => {
+    process.env.REDIS_URL = "redis://localhost:0/0";
+
+    await expect(redisPing()).rejects.toThrow("REDIS_URL port is invalid. Use an integer between 1 and 65535.");
+    expect(mockSocketState.sockets).toHaveLength(0);
+  });
 });

@@ -151,7 +151,14 @@ function getRedisEndpoint(): RedisEndpoint | null {
 
   return {
     host: url.hostname || "127.0.0.1",
-    port: url.port ? Number.parseInt(url.port, 10) : 6379,
+    port: (() => {
+      if (!url.port) return 6379;
+      const parsedPort = Number.parseInt(url.port, 10);
+      if (!Number.isFinite(parsedPort) || !Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+        throw new Error("REDIS_URL port is invalid. Use an integer between 1 and 65535.");
+      }
+      return parsedPort;
+    })(),
     db,
     username: url.username ? decodeURIComponent(url.username) : null,
     password: url.password ? decodeURIComponent(url.password) : null,

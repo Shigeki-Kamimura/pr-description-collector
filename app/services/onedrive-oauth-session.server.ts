@@ -94,19 +94,46 @@ export async function storeTokenForSession(sessionId: string, cache: TokenCache)
   }
 }
 
+// 破損セッションの cleanup はベストエフォートで行い、認証切れ扱いを優先する。
+async function deleteCorruptedSessionKey(sessionId: string): Promise<void> {
+  try {
+    await redisDel(toSessionKey(sessionId));
+  } catch {
+    // cleanup 失敗は握りつぶし、元の処理結果を優先する。
+  }
+}
+
 // Redis から読んだ JSON を最低限検証し、壊れた値をそのまま業務ロジックへ渡さない。
 export async function getTokenForSession(sessionId: string | null): Promise<TokenCache | null> {
   if (!sessionId) return null;
+
+  let raw: string | null;
   try {
-    const raw = await redisGet(toSessionKey(sessionId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as TokenCache;
-    if (typeof parsed.accessToken !== "string") return null;
-    if (parsed.refreshToken !== null && typeof parsed.refreshToken !== "string") return null;
-    if (typeof parsed.expiresAt !== "number" || !Number.isFinite(parsed.expiresAt)) return null;
-    return parsed;
+    raw = await redisGet(toSessionKey(sessionId));
   } catch (error) {
     throw toStoreUnavailableError("read", error);
+  }
+
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as TokenCache;
+    if (typeof parsed.accessToken !== "string") {
+      await deleteCorruptedSessionKey(sessionId);
+      return null;
+    }
+    if (parsed.refreshToken !== null && typeof parsed.refreshToken !== "string") {
+      await deleteCorruptedSessionKey(sessionId);
+      return null;
+    }
+    if (typeof parsed.expiresAt !== "number" || !Number.isFinite(parsed.expiresAt)) {
+      await deleteCorruptedSessionKey(sessionId);
+      return null;
+    }
+    return parsed;
+  } catch {
+    await deleteCorruptedSessionKey(sessionId);
+    return null;
   }
 }
 
