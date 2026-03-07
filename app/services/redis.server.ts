@@ -147,8 +147,11 @@ function getRedisEndpoint(): RedisEndpoint | null {
     throw new Error("REDIS_URL must use redis:// or rediss://");
   }
 
-  const dbPath = url.pathname.replace(/^\//, "");
-  const db = dbPath ? Number.parseInt(dbPath, 10) : 0;
+  const dbPath = url.pathname;
+  if (dbPath !== "/" && !/^\/\d+$/.test(dbPath)) {
+    throw new Error("REDIS_URL database index is invalid. Use /<non-negative-integer>.");
+  }
+  const db = dbPath === "/" ? 0 : Number.parseInt(dbPath.slice(1), 10);
   if (!Number.isFinite(db) || db < 0) {
     throw new Error("REDIS_URL database index is invalid");
   }

@@ -150,6 +150,13 @@ describe("redis.server timeout cleanup", () => {
     expect(mockSocketState.sockets).toHaveLength(0);
   });
 
+  it("REDIS_URL の DB path が不正なら明確な設定エラーを返す", async () => {
+    process.env.REDIS_URL = "redis://localhost:6379/0/extra";
+
+    await expect(redisPing()).rejects.toThrow("REDIS_URL database index is invalid. Use /<non-negative-integer>.");
+    expect(mockSocketState.sockets).toHaveLength(0);
+  });
+
   it("password に % が含まれても URIError にならず接続処理へ進む", async () => {
     mockSocketState.mode = "command-timeout";
     process.env.REDIS_URL = "redis://user:pa%ss@localhost:6379/0";
