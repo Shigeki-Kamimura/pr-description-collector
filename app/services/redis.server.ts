@@ -32,6 +32,10 @@ type SocketWithConnectPhaseError = (Socket | TLSSocket) & {
   [SOCKET_CONNECT_PHASE_ERROR]?: Error;
 };
 
+function getSocketConnectPhaseError(socket: Socket | TLSSocket): Error | undefined {
+  return (socket as SocketWithConnectPhaseError)[SOCKET_CONNECT_PHASE_ERROR];
+}
+
 // Redis の RESP 応答を逐次パースし、ソケットの chunk 分割を吸収する。
 class RespParser {
   private buffer = Buffer.alloc(0);
@@ -268,7 +272,7 @@ async function runSequence(sequence: string[][]): Promise<RespValue[]> {
   commands.push(...sequence);
 
   const socket = await openSocket(endpoint, timeoutMs);
-  const connectPhaseError = (socket as SocketWithConnectPhaseError)[SOCKET_CONNECT_PHASE_ERROR];
+  const connectPhaseError = getSocketConnectPhaseError(socket);
   if (connectPhaseError) {
     throw connectPhaseError;
   }
@@ -320,7 +324,8 @@ async function runSequence(sequence: string[][]): Promise<RespValue[]> {
     const onError = (error: Error) => fail(error);
     const onClose = () => {
       if (values.length < commands.length) {
-        fail(new Error("Redis connection closed before full response was received"));
+        const closeCause = getSocketConnectPhaseError(socket);
+        fail(closeCause ?? new Error("Redis connection closed before full response was received"));
       }
     };
     const timer = setTimeout(() => {

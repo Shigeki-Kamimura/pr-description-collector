@@ -11,7 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockSocketState } = vi.hoisted(() => ({
   mockSocketState: {
-    mode: "connect-timeout" as "connect-timeout" | "command-timeout" | "post-connect-sync-error",
+    mode:
+      "connect-timeout" as
+        | "connect-timeout"
+        | "command-timeout"
+        | "post-connect-sync-error"
+        | "post-connect-async-error-close-fallback",
     sockets: [] as Array<{ destroyedByTest: boolean; endedByTest: boolean }>,
   },
 }));
@@ -21,6 +26,7 @@ vi.mock("node:net", async () => {
   class MockSocket extends EventEmitter {
     destroyedByTest = false;
     endedByTest = false;
+    errorOnceRegistrations = 0;
 
     constructor() {
       super();
@@ -35,8 +41,27 @@ vi.mock("node:net", async () => {
       } else if (mockSocketState.mode === "post-connect-sync-error") {
         this.emit("connect");
         this.emit("error", new Error("ECONNRESET after connect"));
+      } else if (mockSocketState.mode === "post-connect-async-error-close-fallback") {
+        this.emit("connect");
+        setTimeout(() => {
+          this.emit("error", new Error("ECONNRESET after connect async"));
+        }, 0);
       }
       return this;
+    }
+
+    once(eventName: string | symbol, listener: (...args: any[]) => void) {
+      if (eventName === "error") {
+        this.errorOnceRegistrations += 1;
+        // openSocket の error listener は残しつつ、runSequence 側 listener だけ未登録を再現する。
+        if (
+          mockSocketState.mode === "post-connect-async-error-close-fallback" &&
+          this.errorOnceRegistrations >= 2
+        ) {
+          return this;
+        }
+      }
+      return super.once(eventName, listener);
     }
 
     write(_chunk: Buffer) {
@@ -139,6 +164,17 @@ describe("redis.server timeout cleanup", () => {
     mockSocketState.mode = "post-connect-sync-error";
 
     await expect(redisPing()).rejects.toThrow("ECONNRESET after connect");
+    expect(mockSocketState.sockets).toHaveLength(1);
+    expect(mockSocketState.sockets[0].destroyedByTest).toBe(true);
+  });
+
+  it("connect直後の非同期errorは close 経由でも原因errorを優先して返す", async () => {
+    mockSocketState.mode = "post-connect-async-error-close-fallback";
+
+    const promise = redisPing();
+    const rejection = expect(promise).rejects.toThrow("ECONNRESET after connect async");
+    await vi.advanceTimersByTimeAsync(1);
+    await rejection;
     expect(mockSocketState.sockets).toHaveLength(1);
     expect(mockSocketState.sockets[0].destroyedByTest).toBe(true);
   });
