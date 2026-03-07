@@ -13,7 +13,8 @@
 import { redisCompareAndDelete, redisDel, redisGet, redisSetEx, redisSetNxPx } from "./redis.server";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
-const REFRESH_LOCK_POLL_MS = 100;
+const REFRESH_LOCK_POLL_INITIAL_MS = 100;
+const REFRESH_LOCK_POLL_MAX_MS = 1000;
 const STORE_PROBE_TTL_SECONDS = 5;
 const SESSION_KEY_PREFIX = "onedrive:session:";
 const STORE_PROBE_KEY_PREFIX = "onedrive:probe:";
@@ -182,6 +183,7 @@ export type RefreshOutcome =
 // 他 worker の refresh 完了または失敗を待ち、結果が出たら同じ outcome を返す。
 export async function waitForRefreshOutcome(sessionId: string, waitMs: number): Promise<RefreshOutcome | null> {
   const deadline = Date.now() + waitMs;
+  let pollMs = REFRESH_LOCK_POLL_INITIAL_MS;
   while (Date.now() < deadline) {
     const token = await getTokenForSession(sessionId);
     if (token && token.expiresAt > Date.now()) {
@@ -195,7 +197,8 @@ export async function waitForRefreshOutcome(sessionId: string, waitMs: number): 
       }
     }
 
-    await sleep(REFRESH_LOCK_POLL_MS);
+    await sleep(pollMs);
+    pollMs = Math.min(REFRESH_LOCK_POLL_MAX_MS, pollMs * 2);
   }
   return null;
 }

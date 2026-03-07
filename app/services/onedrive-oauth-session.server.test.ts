@@ -21,6 +21,7 @@ const { redisMockState } = vi.hoisted(() => ({
     refreshLockValue: null as string | null,
     refreshFailureReadError: null as Error | null,
     refreshLockReadError: null as Error | null,
+    redisGetCallCount: 0,
   },
 }));
 
@@ -42,6 +43,7 @@ vi.mock("./redis.server", () => ({
   }),
   redisSetNxPx: vi.fn(),
   redisGet: vi.fn(async (key: string) => {
+    redisMockState.redisGetCallCount += 1;
     if (key.startsWith("onedrive:probe:")) {
       return redisMockState.probeReadValueOverride ?? redisMockState.probeStoredValue;
     }
@@ -81,6 +83,7 @@ describe("onedrive-oauth-session", () => {
     redisMockState.refreshLockValue = null;
     redisMockState.refreshFailureReadError = null;
     redisMockState.refreshLockReadError = null;
+    redisMockState.redisGetCallCount = 0;
   });
 
   it("session store preflight は write/read/delete probe を通す", async () => {
@@ -150,5 +153,17 @@ describe("onedrive-oauth-session", () => {
         expiresAt: expect.any(Number),
       },
     });
+  });
+
+  it("待機ポーリングは指数バックオフで Redis read 回数を抑える", async () => {
+    vi.useFakeTimers();
+    try {
+      const promise = waitForRefreshOutcome("session-backoff", 500);
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(promise).resolves.toBeNull();
+      expect(redisMockState.redisGetCallCount).toBeLessThanOrEqual(6);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
