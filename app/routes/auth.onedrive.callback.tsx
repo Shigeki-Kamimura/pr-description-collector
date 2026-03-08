@@ -7,6 +7,7 @@
 import { redirect } from "react-router";
 import { isHttpsRequest } from "../services/https-validation.server";
 import { logger } from "../services/logger.server";
+import { buildOneDriveAuditErrorPayload, sanitizeAuditPayload } from "../services/onedrive-audit-log.server";
 import {
   ensureOAuthSessionStoreAvailable,
   isOAuthSessionTokenCryptoError,
@@ -58,11 +59,17 @@ export async function loader({ request }: { request: Request }) {
 
   if (error) {
     // 詳細はサーバーログに残し、クライアントには再試行可能な定型メッセージのみ返す。
-    logger.warn("OneDrive OAuth callback returned an error.", {
-      error,
-      errorDescription,
-      errorCodes,
-    });
+    logger.warn(
+      "OneDrive OAuth callback returned an error.",
+      sanitizeAuditPayload({
+        event: "onedrive.oauth-callback-provider-error",
+        route: "auth/onedrive/callback",
+        failureType: "oauth-provider",
+        error,
+        errorDescription,
+        errorCodes,
+      }),
+    );
     return buildOAuthFailureRedirect();
   }
 
@@ -105,9 +112,17 @@ export async function loader({ request }: { request: Request }) {
     await ensureOAuthSessionStoreAvailable();
   } catch (error) {
     if (isOAuthSessionStoreUnavailableError(error)) {
-      logger.error("OneDrive OAuth session store failed.", {
-        message: error.message,
-      });
+      // セッションストアが利用できない場合は、OAuthフローを継続できないため、クライアントには一時的な障害であることを伝える。
+      logger.error(
+        "OneDrive OAuth session store failed.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.session-store-unavailable",
+          route: "auth/onedrive/callback",
+          error,
+          status: 503,
+          failureType: "session-store",
+        }),
+      );
       return new Response(OAUTH_INFRASTRUCTURE_ERROR_MESSAGE, { status: 503 });
     }
     throw error;
@@ -120,14 +135,28 @@ export async function loader({ request }: { request: Request }) {
   } catch (err) {
     // トークン交換失敗の原因がセッションストア障害なのかを判別し、適切なレスポンスを返す。
     if (isOAuthSessionStoreUnavailableError(err)) {
-      logger.error("OneDrive OAuth session store failed.", {
-        message: err.message,
-      });
+      logger.error(
+        "OneDrive OAuth session store failed.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.session-store-unavailable",
+          route: "auth/onedrive/callback",
+          error: err,
+          status: 503,
+          failureType: "session-store",
+        }),
+      );
       return new Response(OAUTH_INFRASTRUCTURE_ERROR_MESSAGE, { status: 503 });
     }
-    const message = err instanceof Error ? err.message : "Unknown error";
     // token交換失敗の詳細はサーバーログのみで扱う。
-    logger.error("OneDrive OAuth token exchange failed.", { message });
+    logger.error(
+      "OneDrive OAuth token exchange failed.",
+      buildOneDriveAuditErrorPayload({
+        event: "onedrive.oauth-token-exchange-failed",
+        route: "auth/onedrive/callback",
+        error: err,
+        failureType: "oauth-token-exchange",
+      }),
+    );
     return buildOAuthFailureRedirect();
   }
   const sessionId = crypto.randomUUID();
@@ -136,17 +165,35 @@ export async function loader({ request }: { request: Request }) {
   } catch (error) {
     // トークン保存失敗の原因がセッションストア障害なのかを判別し、適切なレスポンスを返す。
     if (isOAuthSessionStoreUnavailableError(error)) {
-      logger.error("OneDrive OAuth session store failed.", {
-        message: error.message,
-        errorType: "store-unavailable",
-      });
+      logger.error(
+        "OneDrive OAuth session store failed.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.session-store-unavailable",
+          route: "auth/onedrive/callback",
+          error,
+          status: 503,
+          failureType: "session-store",
+          extra: {
+            errorType: "store-unavailable",
+          },
+        }),
+      );
       return buildOAuthInfrastructureErrorResponse(OAUTH_PERSIST_FAILED_AFTER_EXCHANGE_MESSAGE);
     }
     if (isOAuthSessionTokenCryptoError(error)) {
-      logger.error("OneDrive OAuth token crypto failed.", {
-        message: error.message,
-        errorType: "token-crypto",
-      });
+      logger.error(
+        "OneDrive OAuth token crypto failed.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.token-crypto-failed",
+          route: "auth/onedrive/callback",
+          error,
+          status: 503,
+          failureType: "token-crypto",
+          extra: {
+            errorType: "token-crypto",
+          },
+        }),
+      );
       return buildOAuthInfrastructureErrorResponse(OAUTH_PERSIST_FAILED_AFTER_EXCHANGE_MESSAGE);
     }
     throw error;

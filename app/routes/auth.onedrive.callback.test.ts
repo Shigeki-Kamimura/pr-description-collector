@@ -70,19 +70,34 @@ describe("auth.onedrive.callback loader", () => {
   });
 
   it("OAuth provider error時はトップへリダイレクトする", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const request = new Request(
-      "https://localhost:5173/auth/onedrive/callback?error=access_denied&error_description=sensitive-details&error_codes=12345",
+      "https://localhost:5173/auth/onedrive/callback?error=access_denied&error_description=token%3Dsuper-secret-token&error_codes=12345",
     );
 
     const response = await loader({ request });
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("/?onedrive=oauth_failed");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "OneDrive OAuth callback returned an error.",
+      expect.objectContaining({
+        errorDescription: expect.not.stringContaining("super-secret-token"),
+      }),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      "OneDrive OAuth callback returned an error.",
+      expect.objectContaining({
+        errorDescription: expect.stringContaining("[REDACTED]"),
+      }),
+    );
+    warnSpy.mockRestore();
   });
 
   it("token交換失敗時はトップへリダイレクトする", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(onedriveOAuthStateCookie.parse).mockResolvedValue("bind-a.nonce-1");
     vi.mocked(onedriveOAuthBindCookie.parse).mockResolvedValue("bind-a");
-    vi.mocked(exchangeCodeForToken).mockRejectedValue(new Error("sensitive-token-error"));
+    vi.mocked(exchangeCodeForToken).mockRejectedValue(new Error("refresh_token=very-secret-refresh-token"));
 
     const request = new Request(
       "https://localhost:5173/auth/onedrive/callback?code=test-code&state=bind-a.nonce-1",
@@ -92,6 +107,19 @@ describe("auth.onedrive.callback loader", () => {
     const response = await loader({ request });
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("/?onedrive=oauth_failed");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "OneDrive OAuth token exchange failed.",
+      expect.objectContaining({
+        message: expect.not.stringContaining("very-secret-refresh-token"),
+      }),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      "OneDrive OAuth token exchange failed.",
+      expect.objectContaining({
+        message: expect.stringContaining("[REDACTED]"),
+      }),
+    );
+    errorSpy.mockRestore();
   });
 
   it("Redis障害時は503で停止する", async () => {

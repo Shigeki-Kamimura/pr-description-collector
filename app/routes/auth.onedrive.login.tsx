@@ -7,6 +7,7 @@ import { redirect } from "react-router";
 // OneDrive OAuthはセキュアな環境でのみ動作するため、HTTPSでない場合はエラーレスポンスを返す。
 import { isHttpsRequest } from "../services/https-validation.server";
 import { logger } from "../services/logger.server";
+import { buildOneDriveAuditErrorPayload } from "../services/onedrive-audit-log.server";
 import { ensureOAuthSessionStoreAvailable, isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import {
   buildAuthorizeUrl,
@@ -28,9 +29,17 @@ export async function loader({ request }: { request: Request }) {
     await ensureOAuthSessionStoreAvailable();
   } catch (error) {
     if (isOAuthSessionStoreUnavailableError(error)) {
-      logger.error("OneDrive OAuth session store failed.", {
-        message: error.message,
-      });
+      // セッションストアが利用できない場合は、OAuthフローを継続できないため、クライアントには一時的な障害であることを伝える。
+      logger.error(
+        "OneDrive OAuth session store failed.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.session-store-unavailable",
+          route: "auth/onedrive/login",
+          error,
+          status: 503,
+          failureType: "session-store",
+        }),
+      );
       return new Response(
         "OneDrive 認証基盤で一時障害が発生しています。時間をおいて再試行してください。",
         { status: 503 },
