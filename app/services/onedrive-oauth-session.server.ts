@@ -29,6 +29,7 @@ const TOKEN_ENCRYPTION_VERSION_PREFIX = "v1";
 const TOKEN_ENCRYPTION_IV_BYTES = 12;
 const TOKEN_ENCRYPTION_AUTH_TAG_BYTES = 16;
 const TOKEN_ENCRYPTION_KDF_CONTEXT = "onedrive-oauth-token-encryption";
+const TOKEN_ENCRYPTION_KEY_VERSION_PATTERN = /^[A-Za-z0-9_-]+$/;
 const TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION?.trim() || "k1";
 const TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL =
   process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL?.trim() || resolvedSessionSecret;
@@ -56,8 +57,17 @@ function deriveTokenEncryptionKey(material: string, version: string): Buffer {
   return Buffer.from(hkdfSync("sha256", Buffer.from(material, "utf8"), Buffer.from(version, "utf8"), TOKEN_ENCRYPTION_KDF_CONTEXT, 32));
 }
 
+// 鍵バージョンは英数字・ハイフン・アンダースコアのみ許可し、ログに出す際の安全性を確保する。
+function validateTokenEncryptionKeyVersion(envName: string, value: string): void {
+  if (TOKEN_ENCRYPTION_KEY_VERSION_PATTERN.test(value)) return;
+  throw new Error(
+    `${envName} の値 "${value}" は無効です。英数字・ハイフン(-)・アンダースコア(_)のみ使用できます。`,
+  );
+}
+
 function resolveTokenEncryptionKeys(): { current: TokenEncryptionKey; previous: TokenEncryptionKey | null } {
   // 現行キーは必須、前回キーは任意。前回キーが不完全な場合はエラーにする。
+  validateTokenEncryptionKeyVersion("ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION", TOKEN_ENCRYPTION_CURRENT_KEY_VERSION);
   const current: TokenEncryptionKey = {
     version: TOKEN_ENCRYPTION_CURRENT_KEY_VERSION,
     key: deriveTokenEncryptionKey(TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL, TOKEN_ENCRYPTION_CURRENT_KEY_VERSION),
@@ -71,6 +81,7 @@ function resolveTokenEncryptionKeys(): { current: TokenEncryptionKey; previous: 
       "ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION と ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL はセットで指定してください。",
     );
   }
+  validateTokenEncryptionKeyVersion("ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION", TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION);
   const previous: TokenEncryptionKey = {
     version: TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION,
     key: deriveTokenEncryptionKey(TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL, TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION),
