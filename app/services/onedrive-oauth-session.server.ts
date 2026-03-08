@@ -13,6 +13,7 @@
 import { redisCompareAndDelete, redisDel, redisGet, redisSetEx, redisSetNxPx } from "./redis.server";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { resolvedSessionSecret } from "./session-secret.server";
+import { logger } from "./logger.server";
 
 // 定数定義。呼び出し側はこれらの値を知らなくていいように、必要なロジックはこのファイル内に閉じ込める。
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
@@ -44,9 +45,21 @@ export class OAuthSessionStoreUnavailableError extends Error {
     this.name = "OAuthSessionStoreUnavailableError";
   }
 }
+
+// token 暗号化の失敗を Redis 障害と区別して扱う専用エラー。
+export class OAuthSessionTokenCryptoError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "OAuthSessionTokenCryptoError";
+  }
+}
 // OAuthSessionStoreUnavailableError 型ガード。これを使うことで、呼び出し側は Redis 障害と認証エラーを明確に分けて扱えるようになる。
 export function isOAuthSessionStoreUnavailableError(error: unknown): error is OAuthSessionStoreUnavailableError {
   return error instanceof OAuthSessionStoreUnavailableError;
+}
+
+export function isOAuthSessionTokenCryptoError(error: unknown): error is OAuthSessionTokenCryptoError {
+  return error instanceof OAuthSessionTokenCryptoError;
 }
 
 // Redis 上の key 命名規則を閉じ込め、呼び出し側に prefix 知識を漏らさない。
@@ -74,19 +87,22 @@ function toStoreUnavailableError(action: string, error: unknown): OAuthSessionSt
   });
 }
 
+function toTokenCryptoError(action: "encrypt" | "decrypt", error: unknown): OAuthSessionTokenCryptoError {
+  const message = error instanceof Error ? error.message : String(error);
+  return new OAuthSessionTokenCryptoError(`OneDrive OAuth token ${action} failed: ${message}`, {
+    cause: error,
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
 }
 
-function parseTokenCache(value: string): TokenCache | null {
-  const parsed = JSON.parse(value) as TokenCache;
-  if (typeof parsed.accessToken !== "string") return null;
-  if (parsed.refreshToken !== null && typeof parsed.refreshToken !== "string") return null;
-  if (typeof parsed.expiresAt !== "number" || !Number.isFinite(parsed.expiresAt)) return null;
-  return parsed;
-}
+type ParseTokenCacheResult =
+  | { cache: TokenCache; reason: null }
+  | { cache: null; reason: string };
 
 function encryptTokenCache(cache: TokenCache): string {
   const iv = randomBytes(TOKEN_ENCRYPTION_IV_BYTES);
@@ -103,25 +119,65 @@ function encryptTokenCache(cache: TokenCache): string {
   ].join(".");
 }
 
-// 暗号化形式以外は旧形式として即無効化する（fail-closed）。
-function decryptTokenCache(value: string): TokenCache | null {
-  const segments = value.split(".");
-  if (segments.length !== 4) return null;
-  if (segments[0] !== TOKEN_ENCRYPTION_VERSION_PREFIX) return null;
+// 復号後の値が正しい token cache 形式か最低限検証し、壊れた値を業務ロジックへ渡さない。
+function parseTokenCache(value: string): ParseTokenCacheResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return { cache: null, reason: "invalid-json" };
+  }
 
+  if (!parsed || typeof parsed !== "object") {
+    return { cache: null, reason: "invalid-json-shape" };
+  }
+
+  const candidate = parsed as Partial<TokenCache>;
+  if (typeof candidate.accessToken !== "string") {
+    return { cache: null, reason: "invalid-access-token-type" };
+  }
+  if (candidate.refreshToken !== null && typeof candidate.refreshToken !== "string") {
+    return { cache: null, reason: "invalid-refresh-token-type" };
+  }
+  if (typeof candidate.expiresAt !== "number" || !Number.isFinite(candidate.expiresAt)) {
+    return { cache: null, reason: "invalid-expires-at" };
+  }
+
+  return {
+    cache: {
+      accessToken: candidate.accessToken,
+      refreshToken: candidate.refreshToken,
+      expiresAt: candidate.expiresAt,
+    },
+    reason: null,
+  };
+}
+// decryptTokenCache と parseTokenCache を分けることで、暗号化の失敗と形式の不正を区別してログに出せるようにする。
+type DecryptTokenCacheResult =
+  | { cache: TokenCache; reason: null }
+  | { cache: null; reason: string };
+
+// 暗号化形式以外は旧形式として即無効化する（fail-closed）。
+function decryptTokenCache(value: string): DecryptTokenCacheResult {
+  const segments = value.split(".");
+  if (segments.length !== 4) return { cache: null, reason: "invalid-segment-count" };
+  if (segments[0] !== TOKEN_ENCRYPTION_VERSION_PREFIX) return { cache: null, reason: "unknown-version" };
+
+  // 復号前に IV と authTag の長さを検査し、壊れた値を業務ロジックへ渡さない。
   try {
     const iv = Buffer.from(segments[1] ?? "", "base64url");
     const authTag = Buffer.from(segments[2] ?? "", "base64url");
     const encrypted = Buffer.from(segments[3] ?? "", "base64url");
-    if (iv.length !== TOKEN_ENCRYPTION_IV_BYTES) return null;
-    if (authTag.length !== TOKEN_ENCRYPTION_AUTH_TAG_BYTES) return null;
+    if (iv.length !== TOKEN_ENCRYPTION_IV_BYTES) return { cache: null, reason: "invalid-iv-length" };
+    if (authTag.length !== TOKEN_ENCRYPTION_AUTH_TAG_BYTES) return { cache: null, reason: "invalid-auth-tag-length" };
 
     const decipher = createDecipheriv(TOKEN_ENCRYPTION_ALGORITHM, tokenEncryptionKey, iv);
     decipher.setAuthTag(authTag);
     const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
     return parseTokenCache(decrypted);
-  } catch {
-    return null;
+  } catch (error) {
+    const cryptoError = toTokenCryptoError("decrypt", error);
+    return { cache: null, reason: cryptoError.message };
   }
 }
 // 以下、Redis ストアを経由した OneDrive OAuth token 永続化の実装。呼び出し側はこれらの関数を通じて sessionId と token cache をやりとりする。
@@ -140,9 +196,17 @@ export async function ensureOAuthSessionStoreAvailable(): Promise<void> {
   }
 }
 
+// token cache を暗号化して Redis に保存する。暗号化失敗と Redis 障害を区別して専用エラーを投げる。
 export async function storeTokenForSession(sessionId: string, cache: TokenCache): Promise<void> {
+  let encryptedCache: string;
   try {
-    await redisSetEx(toSessionKey(sessionId), encryptTokenCache(cache), SESSION_TTL_SECONDS);
+    encryptedCache = encryptTokenCache(cache);
+  } catch (error) {
+    throw toTokenCryptoError("encrypt", error);
+  }
+
+  try {
+    await redisSetEx(toSessionKey(sessionId), encryptedCache, SESSION_TTL_SECONDS);
   } catch (error) {
     throw toStoreUnavailableError("write", error);
   }
@@ -157,7 +221,7 @@ async function deleteCorruptedSessionKey(sessionId: string): Promise<void> {
   }
 }
 
-// Redis から読んだ JSON を最低限検証し、壊れた値をそのまま業務ロジックへ渡さない。
+// Redis から読んだ暗号化 payload を最低限検証し、壊れた値をそのまま業務ロジックへ渡さない。
 export async function getTokenForSession(sessionId: string | null): Promise<TokenCache | null> {
   if (!sessionId) return null;
 
@@ -170,14 +234,18 @@ export async function getTokenForSession(sessionId: string | null): Promise<Toke
 
   if (!raw) return null;
 
-  const parsed = decryptTokenCache(raw);
-  if (!parsed) {
+  const decrypted = decryptTokenCache(raw);
+  if (!decrypted.cache) {
+    logger.warn("Discarding invalid OneDrive OAuth session token.", {
+      sessionId,
+      reason: decrypted.reason,
+    });
     await deleteCorruptedSessionKey(sessionId);
     return null;
   }
-  return parsed;
+  return decrypted.cache;
 }
-
+// セッション削除は認証切れと同等の扱いで、呼び出し側で必要に応じて再認証フローへ誘導する。
 export async function deleteTokenForSession(sessionId: string): Promise<void> {
   try {
     await redisDel(toSessionKey(sessionId));
