@@ -30,11 +30,19 @@ const TOKEN_ENCRYPTION_IV_BYTES = 12;
 const TOKEN_ENCRYPTION_AUTH_TAG_BYTES = 16;
 const TOKEN_ENCRYPTION_KDF_CONTEXT = "onedrive-oauth-token-encryption";
 const TOKEN_ENCRYPTION_KEY_VERSION_PATTERN = /^[A-Za-z0-9_-]+$/;
-const TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION?.trim() || "k1";
+function readOptionalNonEmptyEnv(envName: string): string | undefined {
+  const raw = process.env[envName];
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length > 0) return trimmed;
+  throw new Error(`${envName} は空文字を許可しません。未設定にするか、有効な値を設定してください。`);
+}
+
+const TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = readOptionalNonEmptyEnv("ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION") ?? "k1";
 const TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL =
-  process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL?.trim() || resolvedSessionSecret;
-const TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION = process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION?.trim() || "";
-const TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL = process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL?.trim() || "";
+  readOptionalNonEmptyEnv("ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL") ?? resolvedSessionSecret;
+const TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION = readOptionalNonEmptyEnv("ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION") ?? "";
+const TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL = readOptionalNonEmptyEnv("ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL") ?? "";
 const TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION =
   process.env.ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION?.trim().toLowerCase() === "true";
 

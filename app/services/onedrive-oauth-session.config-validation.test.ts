@@ -71,6 +71,26 @@ describe("onedrive-oauth-session key version validation", () => {
     );
   });
 
+  it.each(["", "   "])("current key version '%s' は空文字として拒否される", async (version) => {
+    setBaseEnv();
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = version;
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = "current-key-material";
+
+    await expect(importSessionModule()).rejects.toThrow(
+      "ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION は空文字を許可しません。",
+    );
+  });
+
+  it.each(["", "   "])("current key material '%s' は空文字として拒否される", async (material) => {
+    setBaseEnv();
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = "k1";
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = material;
+
+    await expect(importSessionModule()).rejects.toThrow(
+      "ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL は空文字を許可しません。",
+    );
+  });
+
   it.each(["prev.1", "prev 1", "prev/1", "旧鍵"])("previous key version '%s' は拒否される", async (version) => {
     setBaseEnv();
     process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = "k1";
