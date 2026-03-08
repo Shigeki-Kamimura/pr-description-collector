@@ -9,6 +9,7 @@ const ENV_KEYS = [
   "ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL",
   "ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION",
   "ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL",
+  "ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION",
 ] as const;
 
 function snapshotEnv(): EnvSnapshot {
@@ -33,6 +34,7 @@ function setBaseEnv(): void {
   delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL;
   delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION;
   delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL;
+  delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION;
 }
 
 async function importSessionModule() {
@@ -53,6 +55,7 @@ describe("onedrive-oauth-session key version validation", () => {
       setBaseEnv();
       process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = version;
       process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = "current-key-material";
+      process.env.ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION = "true";
 
       await expect(importSessionModule()).resolves.toBeTruthy();
     },
@@ -90,5 +93,24 @@ describe("onedrive-oauth-session key version validation", () => {
     await expect(importSessionModule()).rejects.toThrow(
       "ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION は current と異なる値を指定してください。",
     );
+  });
+
+  it("current が k1 以外で previous 未設定なら拒否される", async () => {
+    setBaseEnv();
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = "k2";
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = "current-key-material";
+
+    await expect(importSessionModule()).rejects.toThrow(
+      "ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION / ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL が未設定です。",
+    );
+  });
+
+  it("current が k1 以外でも明示フラグありなら previous 未設定で許可される", async () => {
+    setBaseEnv();
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = "k2";
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = "current-key-material";
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION = "true";
+
+    await expect(importSessionModule()).resolves.toBeTruthy();
   });
 });

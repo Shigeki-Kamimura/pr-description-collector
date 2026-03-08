@@ -35,6 +35,8 @@ const TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL =
   process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL?.trim() || resolvedSessionSecret;
 const TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION = process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION?.trim() || "";
 const TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL = process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL?.trim() || "";
+const TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION =
+  process.env.ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION?.trim().toLowerCase() === "true";
 
 // OneDrive OAuth の server-side session に保存する最小契約。
 export type TokenCache = {
@@ -74,6 +76,18 @@ function resolveTokenEncryptionKeys(): { current: TokenEncryptionKey; previous: 
   };
 
   if (!TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION && !TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL) {
+    if (TOKEN_ENCRYPTION_CURRENT_KEY_VERSION !== "k1") {
+      if (!TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION) {
+        throw new Error(
+          "ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION / ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL が未設定です。" +
+            "ローテーション時は previous 鍵を設定するか、意図的に全セッションを失効させる場合のみ " +
+            "ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION=true を指定してください。",
+        );
+      }
+      logger.warn("OneDrive token encryption rotation proceeds without previous key; existing sessions may be invalidated.", {
+        currentKeyVersion: TOKEN_ENCRYPTION_CURRENT_KEY_VERSION,
+      });
+    }
     return { current, previous: null };
   }
   if (!TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION || !TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL) {
