@@ -11,7 +11,10 @@
  * - 複数インスタンスで token refresh の多重実行を抑止するとき。
  */
 import { redisCompareAndDelete, redisDel, redisGet, redisSetEx, redisSetNxPx } from "./redis.server";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { resolvedSessionSecret } from "./session-secret.server";
 
+// 定数定義。呼び出し側はこれらの値を知らなくていいように、必要なロジックはこのファイル内に閉じ込める。
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 const REFRESH_LOCK_POLL_INITIAL_MS = 100;
 const REFRESH_LOCK_POLL_MAX_MS = 1000;
@@ -20,6 +23,10 @@ const SESSION_KEY_PREFIX = "onedrive:session:";
 const STORE_PROBE_KEY_PREFIX = "onedrive:probe:";
 const REFRESH_LOCK_KEY_PREFIX = "onedrive:refresh-lock:";
 const REFRESH_FAILURE_KEY_PREFIX = "onedrive:refresh-failure:";
+const TOKEN_ENCRYPTION_ALGORITHM = "aes-256-gcm";
+const TOKEN_ENCRYPTION_VERSION_PREFIX = "v1";
+const TOKEN_ENCRYPTION_IV_BYTES = 12;
+const TOKEN_ENCRYPTION_AUTH_TAG_BYTES = 16;
 
 // OneDrive OAuth の server-side session に保存する最小契約。
 export type TokenCache = {
@@ -27,6 +34,8 @@ export type TokenCache = {
   refreshToken: string | null;
   expiresAt: number;
 };
+// セッション秘密鍵から32byte鍵を導出し、token暗号化/復号で共通利用する。
+const tokenEncryptionKey = createHash("sha256").update(resolvedSessionSecret, "utf8").digest();
 
 // Redis 障害を認証切れと区別するための専用エラー。
 export class OAuthSessionStoreUnavailableError extends Error {
@@ -70,6 +79,51 @@ function sleep(ms: number): Promise<void> {
     setTimeout(resolve, ms);
   });
 }
+
+function parseTokenCache(value: string): TokenCache | null {
+  const parsed = JSON.parse(value) as TokenCache;
+  if (typeof parsed.accessToken !== "string") return null;
+  if (parsed.refreshToken !== null && typeof parsed.refreshToken !== "string") return null;
+  if (typeof parsed.expiresAt !== "number" || !Number.isFinite(parsed.expiresAt)) return null;
+  return parsed;
+}
+
+function encryptTokenCache(cache: TokenCache): string {
+  const iv = randomBytes(TOKEN_ENCRYPTION_IV_BYTES);
+  const cipher = createCipheriv(TOKEN_ENCRYPTION_ALGORITHM, tokenEncryptionKey, iv);
+  const plaintext = JSON.stringify(cache);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  // バージョン.iv.authTag.ciphertext の順で保存し、将来の形式変更に備える。
+  return [
+    TOKEN_ENCRYPTION_VERSION_PREFIX,
+    iv.toString("base64url"),
+    authTag.toString("base64url"),
+    encrypted.toString("base64url"),
+  ].join(".");
+}
+
+// 暗号化形式以外は旧形式として即無効化する（fail-closed）。
+function decryptTokenCache(value: string): TokenCache | null {
+  const segments = value.split(".");
+  if (segments.length !== 4) return null;
+  if (segments[0] !== TOKEN_ENCRYPTION_VERSION_PREFIX) return null;
+
+  try {
+    const iv = Buffer.from(segments[1] ?? "", "base64url");
+    const authTag = Buffer.from(segments[2] ?? "", "base64url");
+    const encrypted = Buffer.from(segments[3] ?? "", "base64url");
+    if (iv.length !== TOKEN_ENCRYPTION_IV_BYTES) return null;
+    if (authTag.length !== TOKEN_ENCRYPTION_AUTH_TAG_BYTES) return null;
+
+    const decipher = createDecipheriv(TOKEN_ENCRYPTION_ALGORITHM, tokenEncryptionKey, iv);
+    decipher.setAuthTag(authTag);
+    const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+    return parseTokenCache(decrypted);
+  } catch {
+    return null;
+  }
+}
 // 以下、Redis ストアを経由した OneDrive OAuth token 永続化の実装。呼び出し側はこれらの関数を通じて sessionId と token cache をやりとりする。
 export async function ensureOAuthSessionStoreAvailable(): Promise<void> {
   const probeId = crypto.randomUUID();
@@ -88,7 +142,7 @@ export async function ensureOAuthSessionStoreAvailable(): Promise<void> {
 
 export async function storeTokenForSession(sessionId: string, cache: TokenCache): Promise<void> {
   try {
-    await redisSetEx(toSessionKey(sessionId), JSON.stringify(cache), SESSION_TTL_SECONDS);
+    await redisSetEx(toSessionKey(sessionId), encryptTokenCache(cache), SESSION_TTL_SECONDS);
   } catch (error) {
     throw toStoreUnavailableError("write", error);
   }
@@ -116,25 +170,12 @@ export async function getTokenForSession(sessionId: string | null): Promise<Toke
 
   if (!raw) return null;
 
-  try {
-    const parsed = JSON.parse(raw) as TokenCache;
-    if (typeof parsed.accessToken !== "string") {
-      await deleteCorruptedSessionKey(sessionId);
-      return null;
-    }
-    if (parsed.refreshToken !== null && typeof parsed.refreshToken !== "string") {
-      await deleteCorruptedSessionKey(sessionId);
-      return null;
-    }
-    if (typeof parsed.expiresAt !== "number" || !Number.isFinite(parsed.expiresAt)) {
-      await deleteCorruptedSessionKey(sessionId);
-      return null;
-    }
-    return parsed;
-  } catch {
+  const parsed = decryptTokenCache(raw);
+  if (!parsed) {
     await deleteCorruptedSessionKey(sessionId);
     return null;
   }
+  return parsed;
 }
 
 export async function deleteTokenForSession(sessionId: string): Promise<void> {
