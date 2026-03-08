@@ -137,6 +137,10 @@
    - Redis に保存する OneDrive OAuth の `accessToken` / `refreshToken` を平文で保存してはならない。保存時はサーバー側で暗号化し、読み取り時に復号して利用する。
    - Redis 上の token 保存形式はバージョン識別子を先頭に含むこと（例: `v1.<iv>.<authTag>.<ciphertext>`）。未対応バージョンや不正形式は fail-closed で無効セッションとして扱う。
    - token 暗号化鍵は `SESSION_SECRET` から導出し、プロセス再起動後も同一 `SESSION_SECRET` で復号可能であること。
+   - 鍵ローテーションは `current + previous(1世代)` を上限とする。`previous` は未設定可だが、複数世代（2世代以上）の同時サポートは要件外とする。
+   - 新規保存時の暗号化は常に `current` 鍵を使用し、`previous` 鍵で新規暗号化してはならない。
+   - 復号時は `current` を優先し、失敗時のみ `previous` を試行する。両方で復号不能な場合は fail-closed で無効セッション扱いとする。
+   - `previous` 鍵の供給方式は、アプリ設定（環境変数または同等の設定チャネル）で明示的に指定する。未指定時は `current` のみで運用する。
    - `SESSION_SECRET` が変更された場合、既存の暗号化済み OAuth セッションは復号不能となるため無効化され、再認証を要求する挙動を許容する。
    - Redis は OneDrive OAuth のサーバー側セッションストアとして必須とする。Redis が利用不能な場合、OAuth フローは fail-closed で停止し、メモリストア等への自動 fallback は行わない。
    - Redis 接続障害、timeout、読み書き失敗時は、OAuth 開始、callback、セッション参照、access token refresh を `503 Service Unavailable` として扱う。
