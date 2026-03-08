@@ -10,6 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
+import { resolvedSessionSecret } from "./session-secret.server";
 
 const { testCryptoConfig } = vi.hoisted(() => {
   const testCryptoConfig = {
@@ -84,7 +85,7 @@ function encryptVersionedSessionPayload(payload: unknown, keyVersion: string, ke
 }
 
 function encryptLegacySessionPayload(payload: unknown): string {
-  const key = createHash("sha256").update(process.env.SESSION_SECRET ?? "", "utf8").digest();
+  const key = createHash("sha256").update(resolvedSessionSecret, "utf8").digest();
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const plaintext = JSON.stringify(payload);
