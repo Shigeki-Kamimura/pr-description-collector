@@ -8,9 +8,29 @@
  * - `ensureOAuthSessionStoreAvailable` が write/read/delete probe を行うか確認するとき。
  * - `waitForRefreshOutcome` が Redis read 障害を `OAuthSessionStoreUnavailableError` として返すか確認するとき。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createCipheriv, createHash, randomBytes } from "node:crypto";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { resolvedSessionSecret } from "./session-secret.server";
+
+const { testCryptoConfig, originalEnv } = vi.hoisted(() => {
+  const originalEnv = {
+    currentKeyVersion: process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION,
+    currentKeyMaterial: process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL,
+    previousKeyVersion: process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION,
+    previousKeyMaterial: process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL,
+  };
+  const testCryptoConfig = {
+    currentKeyVersion: "k-current",
+    currentKeyMaterial: "test-current-material",
+    previousKeyVersion: "k-previous",
+    previousKeyMaterial: "test-previous-material",
+  };
+  process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = testCryptoConfig.currentKeyVersion;
+  process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = testCryptoConfig.currentKeyMaterial;
+  process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION = testCryptoConfig.previousKeyVersion;
+  process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL = testCryptoConfig.previousKeyMaterial;
+  return { testCryptoConfig, originalEnv };
+});
 
 const { redisMockState } = vi.hoisted(() => ({
   redisMockState: {
@@ -35,6 +55,42 @@ const { mockLoggerWarn } = vi.hoisted(() => ({
 }));
 
 function encryptMalformedSessionPayload(payload: unknown): string {
+  const key = Buffer.from(
+    hkdfSync(
+      "sha256",
+      Buffer.from(testCryptoConfig.currentKeyMaterial, "utf8"),
+      Buffer.from(testCryptoConfig.currentKeyVersion, "utf8"),
+      "onedrive-oauth-token-encryption",
+      32,
+    ),
+  );
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const plaintext = JSON.stringify(payload);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return ["v1", testCryptoConfig.currentKeyVersion, iv.toString("base64url"), authTag.toString("base64url"), encrypted.toString("base64url")].join(".");
+}
+
+function encryptVersionedSessionPayload(payload: unknown, keyVersion: string, keyMaterial: string): string {
+  const key = Buffer.from(
+    hkdfSync(
+      "sha256",
+      Buffer.from(keyMaterial, "utf8"),
+      Buffer.from(keyVersion, "utf8"),
+      "onedrive-oauth-token-encryption",
+      32,
+    ),
+  );
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const plaintext = JSON.stringify(payload);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return ["v1", keyVersion, iv.toString("base64url"), authTag.toString("base64url"), encrypted.toString("base64url")].join(".");
+}
+
+function encryptLegacySessionPayload(payload: unknown): string {
   const key = createHash("sha256").update(resolvedSessionSecret, "utf8").digest();
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
@@ -117,6 +173,29 @@ import {
 } from "./onedrive-oauth-session.server";
 
 describe("onedrive-oauth-session", () => {
+  afterAll(() => {
+    if (originalEnv.currentKeyVersion === undefined) {
+      delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION;
+    } else {
+      process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = originalEnv.currentKeyVersion;
+    }
+    if (originalEnv.currentKeyMaterial === undefined) {
+      delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL;
+    } else {
+      process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = originalEnv.currentKeyMaterial;
+    }
+    if (originalEnv.previousKeyVersion === undefined) {
+      delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION;
+    } else {
+      process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION = originalEnv.previousKeyVersion;
+    }
+    if (originalEnv.previousKeyMaterial === undefined) {
+      delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL;
+    } else {
+      process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL = originalEnv.previousKeyMaterial;
+    }
+  });
+
   beforeEach(() => {
     redisMockState.deletedProbeKeys.length = 0;
     redisMockState.probeReadValueOverride = null;
@@ -224,8 +303,8 @@ describe("onedrive-oauth-session", () => {
     });
 
     expect(redisMockState.sessionRawValue).toBeTruthy();
-    // v1プレフィックス付きの暗号化フォーマットで保存されることを確認する。
-    expect(redisMockState.sessionRawValue).toContain("v1.");
+    // v1.keyVersion プレフィックス付きの暗号化フォーマットで保存されることを確認する。
+    expect(redisMockState.sessionRawValue).toContain(`v1.${testCryptoConfig.currentKeyVersion}.`);
     expect(redisMockState.sessionRawValue).not.toContain("access-token-plain");
     expect(redisMockState.sessionRawValue).not.toContain("refresh-token-plain");
   });
@@ -301,6 +380,51 @@ describe("onedrive-oauth-session", () => {
     const warnPayload = mockLoggerWarn.mock.calls[0]?.[1];
     expect(warnPayload).not.toHaveProperty("sessionId");
     expect(JSON.stringify(warnPayload)).not.toContain(sessionId);
+  });
+
+  it("previous key version で暗号化された値も復号できる", async () => {
+    const expected = {
+      accessToken: "access-token-previous",
+      refreshToken: "refresh-token-previous",
+      expiresAt: Date.now() + 60_000,
+    };
+    redisMockState.sessionRawValue = encryptVersionedSessionPayload(
+      expected,
+      testCryptoConfig.previousKeyVersion,
+      testCryptoConfig.previousKeyMaterial,
+    );
+
+    await expect(getTokenForSession("session-previous-key")).resolves.toEqual(expected);
+  });
+
+  it("旧4セグメント形式（sha256導出鍵）でも復号できる", async () => {
+    const expected = {
+      accessToken: "access-token-legacy-format",
+      refreshToken: "refresh-token-legacy-format",
+      expiresAt: Date.now() + 60_000,
+    };
+    redisMockState.sessionRawValue = encryptLegacySessionPayload(expected);
+
+    await expect(getTokenForSession("session-legacy-format")).resolves.toEqual(expected);
+  });
+
+  it("未対応 key version は無効セッション扱いで削除する", async () => {
+    redisMockState.sessionRawValue = encryptVersionedSessionPayload(
+      {
+        accessToken: "access-token-unknown-key",
+        refreshToken: "refresh-token-unknown-key",
+        expiresAt: Date.now() + 60_000,
+      },
+      "k-unknown",
+      "unknown-material",
+    );
+
+    await expect(getTokenForSession("session-unknown-key-version")).resolves.toBeNull();
+    expect(redisMockState.deletedSessionKeys).toContain("onedrive:session:session-unknown-key-version");
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      "Discarding invalid OneDrive OAuth session token.",
+      expect.objectContaining({ reason: "unknown-key-version" }),
+    );
   });
 
   it("復号前バリデーション失敗では cause を付けない", async () => {
