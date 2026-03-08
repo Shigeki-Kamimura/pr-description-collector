@@ -9,6 +9,7 @@ import { isHttpsRequest } from "../services/https-validation.server";
 import { logger } from "../services/logger.server";
 import {
   ensureOAuthSessionStoreAvailable,
+  isOAuthSessionTokenCryptoError,
   isOAuthSessionStoreUnavailableError,
 } from "../services/onedrive-oauth-session.server";
 import {
@@ -133,7 +134,7 @@ export async function loader({ request }: { request: Request }) {
   try {
     await persistTokenForSession(sessionId, tokenCache);
   } catch (error) {
-    if (isOAuthSessionStoreUnavailableError(error)) {
+    if (isOAuthSessionStoreUnavailableError(error) || isOAuthSessionTokenCryptoError(error)) {
       logger.error("OneDrive OAuth session store failed.", {
         message: error.message,
       });
