@@ -233,7 +233,7 @@ describe("onedrive-oauth-session", () => {
         expect(isOAuthSessionStoreUnavailableError(error)).toBe(false);
         expect(isOAuthSessionTokenCryptoError(error)).toBe(true);
         expect(error).toBeInstanceOf(OAuthSessionTokenCryptoError);
-        expect((error as Error).message).toContain("OneDrive OAuth token encrypt failed");
+        expect((error as Error).message).toContain("OneDrive token crypto encrypt failed");
         return true;
       });
     } finally {
@@ -269,14 +269,19 @@ describe("onedrive-oauth-session", () => {
     expect(redisMockState.deletedSessionKeys).toContain("onedrive:session:session-legacy-plaintext");
   });
 
-  it("復号失敗時は理由付きの警告ログを残す", async () => {
-    redisMockState.sessionRawValue = "v1.only-three.segments";
+  it("復号失敗時は固定 reason code を警告ログへ残す", async () => {
+    redisMockState.sessionRawValue = [
+      "v1",
+      Buffer.alloc(12).toString("base64url"),
+      Buffer.alloc(16).toString("base64url"),
+      Buffer.from("tampered-ciphertext", "utf8").toString("base64url"),
+    ].join(".");
     await expect(getTokenForSession("session-decrypt-log")).resolves.toBeNull();
     expect(mockLoggerWarn).toHaveBeenCalledWith(
       "Discarding invalid OneDrive OAuth session token.",
       expect.objectContaining({
         sessionId: "session-decrypt-log",
-        reason: expect.any(String),
+        reason: "decrypt-failed",
       }),
     );
   });

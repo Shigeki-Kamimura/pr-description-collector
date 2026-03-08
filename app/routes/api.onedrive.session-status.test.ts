@@ -78,4 +78,39 @@ describe("api.onedrive.session-status loader", () => {
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
+
+  it("token欠落は認証エラーとして401を返す", async () => {
+    vi.mocked(getAccessToken).mockRejectedValue(
+      new Error("OneDrive OAuth token がありません。/auth/onedrive/login で認証してください。"),
+    );
+
+    const response = await loader({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+    };
+
+    expect(response.status).toBe(401);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(true);
+  });
+
+  it("token crypto 障害は認証エラー扱いせず502を返す", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(getAccessToken).mockRejectedValue(new Error("OneDrive token crypto encrypt failed: cipher failed"));
+
+    const response = await loader({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });

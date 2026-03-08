@@ -25,7 +25,7 @@ export function extractOneDriveError(rawMessage: string): { code?: string; messa
 export function isOneDriveAuthLikeError(rawMessage: string): boolean {
   const message = rawMessage.toLowerCase();
   return (
-    message.includes("onedrive oauth token") ||
+    message.includes("onedrive oauth token がありません") ||
     message.includes("onedrive oauth error") ||
     message.includes("onedrive api error (401)") ||
     message.includes("onedrive api error (403)") ||

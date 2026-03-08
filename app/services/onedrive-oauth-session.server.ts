@@ -89,7 +89,7 @@ function toStoreUnavailableError(action: string, error: unknown): OAuthSessionSt
 
 function toTokenCryptoError(action: "encrypt" | "decrypt", error: unknown): OAuthSessionTokenCryptoError {
   const message = error instanceof Error ? error.message : String(error);
-  return new OAuthSessionTokenCryptoError(`OneDrive OAuth token ${action} failed: ${message}`, {
+  return new OAuthSessionTokenCryptoError(`OneDrive token crypto ${action} failed: ${message}`, {
     cause: error,
   });
 }
@@ -175,9 +175,8 @@ function decryptTokenCache(value: string): DecryptTokenCacheResult {
     decipher.setAuthTag(authTag);
     const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
     return parseTokenCache(decrypted);
-  } catch (error) {
-    const cryptoError = toTokenCryptoError("decrypt", error);
-    return { cache: null, reason: cryptoError.message };
+  } catch {
+    return { cache: null, reason: "decrypt-failed" };
   }
 }
 // 以下、Redis ストアを経由した OneDrive OAuth token 永続化の実装。呼び出し側はこれらの関数を通じて sessionId と token cache をやりとりする。
