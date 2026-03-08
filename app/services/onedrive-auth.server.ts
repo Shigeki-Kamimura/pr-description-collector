@@ -26,6 +26,7 @@ const AUTH_BASE_URL = "https://login.microsoftonline.com";
 const DEFAULT_TENANT = "common";
 const SCOPES = ["offline_access", "Files.ReadWrite", "User.Read"];
 const DEFAULT_OAUTH_REQUEST_TIMEOUT_SECONDS = 180;
+const DEFAULT_REFRESH_WAIT_TIMEOUT_SECONDS = 60;
 const REFRESH_LOCK_TTL_BUFFER_MS = 5000;
 
 function parseTimeoutSecondsToMs(value: string | undefined, fallbackMs: number): number {
@@ -39,7 +40,10 @@ const OAUTH_REQUEST_TIMEOUT_MS = parseTimeoutSecondsToMs(
   DEFAULT_OAUTH_REQUEST_TIMEOUT_SECONDS * 1000,
 );
 const REFRESH_LOCK_TTL_MS = OAUTH_REQUEST_TIMEOUT_MS + REFRESH_LOCK_TTL_BUFFER_MS;
-const REFRESH_WAIT_MS = REFRESH_LOCK_TTL_MS;
+const REFRESH_WAIT_MS = parseTimeoutSecondsToMs(
+  process.env.ONEDRIVE_REFRESH_WAIT_TIMEOUT_SECONDS,
+  DEFAULT_REFRESH_WAIT_TIMEOUT_SECONDS * 1000,
+);
 const REFRESH_FAILURE_TTL_SECONDS = Math.ceil(REFRESH_WAIT_MS / 1000);
 
 // Microsoft Entra ID の token endpoint が返すレスポンスのうち、本実装で使う項目だけを表す。

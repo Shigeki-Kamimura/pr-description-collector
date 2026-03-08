@@ -25,6 +25,22 @@ const { mockStoreRefreshFailure } = vi.hoisted(() => ({
     mockRefreshFailures.set(sessionId, message);
   }),
 }));
+const { mockWaitForRefreshOutcome } = vi.hoisted(() => ({
+  mockWaitForRefreshOutcome: vi.fn(async (sessionId: string) => {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const token = mockSessionStore.get(sessionId) ?? null;
+      if (token?.accessToken.startsWith("new-access-token")) {
+        return { kind: "token", token };
+      }
+      const failure = mockRefreshFailures.get(sessionId);
+      if (failure) {
+        return { kind: "error", message: failure };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return null;
+  }),
+}));
 
 vi.mock("./onedrive-oauth-session.server", () => ({
   OAuthSessionStoreUnavailableError: class OAuthSessionStoreUnavailableError extends Error {},
@@ -43,20 +59,7 @@ vi.mock("./onedrive-oauth-session.server", () => ({
   storeRefreshFailure: mockStoreRefreshFailure,
   tryAcquireRefreshLock: mockTryAcquireRefreshLock,
   releaseRefreshLock: mockReleaseRefreshLock,
-  waitForRefreshOutcome: vi.fn(async (sessionId: string) => {
-    for (let attempt = 0; attempt < 30; attempt++) {
-      const token = mockSessionStore.get(sessionId) ?? null;
-      if (token?.accessToken.startsWith("new-access-token")) {
-        return { kind: "token", token };
-      }
-      const failure = mockRefreshFailures.get(sessionId);
-      if (failure) {
-        return { kind: "error", message: failure };
-      }
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    return null;
-  }),
+  waitForRefreshOutcome: mockWaitForRefreshOutcome,
 }));
 
 import {
@@ -80,6 +83,7 @@ describe("onedrive-auth refresh single-flight", () => {
     mockTryAcquireRefreshLock.mockClear();
     mockReleaseRefreshLock.mockClear();
     mockStoreRefreshFailure.mockClear();
+    mockWaitForRefreshOutcome.mockClear();
     delete process.env.REDIS_URL;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -118,6 +122,7 @@ describe("onedrive-auth refresh single-flight", () => {
     expect(token2).toBe("new-access-token");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mockTryAcquireRefreshLock).toHaveBeenCalledWith(sessionId, 185000);
+    expect(mockWaitForRefreshOutcome).toHaveBeenCalledWith(sessionId, 60000);
 
     const token3 = await getAccessToken(request);
     expect(token3).toBe("new-access-token");
