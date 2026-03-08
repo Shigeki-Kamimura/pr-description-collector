@@ -31,6 +31,7 @@ A modern, production-ready template for building full-stack React applications u
 - OneDrive OAuth のサーバー側セッションは Redis を必須とします。
 - `REDIS_URL` 未設定または Redis 障害時は、OAuth login / callback / セッション参照 / token refresh は `503` で fail-closed になります。
 - Redis 障害は認証切れとして扱わず、一時的なシステム障害として返します。
+- 鍵ローテーション手順は [docs/onedrive-oauth-key-rotation-runbook.md](docs/onedrive-oauth-key-rotation-runbook.md) を参照してください。
 
 ### Installation
 
