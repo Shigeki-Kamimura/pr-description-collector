@@ -134,6 +134,10 @@
    - CSRF 対策は署名付き Secure Cookie を用いた方式を維持してよく、Redis 保存は必須としない。
    - OneDrive OAuth を利用するすべての外部公開経路は HTTPS を必須とし、HTTP では認証フローを開始・完了させない。
    - `SESSION_SECRET` は production で必須とし、Cookie 署名の信頼境界を維持する。
+   - Redis に保存する OneDrive OAuth の `accessToken` / `refreshToken` を平文で保存してはならない。保存時はサーバー側で暗号化し、読み取り時に復号して利用する。
+   - Redis 上の token 保存形式はバージョン識別子を先頭に含むこと（例: `v1.<iv>.<authTag>.<ciphertext>`）。未対応バージョンや不正形式は fail-closed で無効セッションとして扱う。
+   - token 暗号化鍵は `SESSION_SECRET` から導出し、プロセス再起動後も同一 `SESSION_SECRET` で復号可能であること。
+   - `SESSION_SECRET` が変更された場合、既存の暗号化済み OAuth セッションは復号不能となるため無効化され、再認証を要求する挙動を許容する。
    - Redis は OneDrive OAuth のサーバー側セッションストアとして必須とする。Redis が利用不能な場合、OAuth フローは fail-closed で停止し、メモリストア等への自動 fallback は行わない。
    - Redis 接続障害、timeout、読み書き失敗時は、OAuth 開始、callback、セッション参照、access token refresh を `503 Service Unavailable` として扱う。
    - Redis 障害時は、ユーザーに認証切れや再認証要求として見せてはならない。UI には「一時的なシステム障害」の種別で表示し、認証エラーと明確に区別する。
