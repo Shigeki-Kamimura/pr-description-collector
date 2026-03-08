@@ -49,6 +49,9 @@ type TokenEncryptionKey = {
   key: Buffer;
 };
 
+// 旧実装（v1.iv.authTag.ciphertext）互換: sha256(SESSION_SECRET) 導出鍵
+const legacyTokenEncryptionKey = createHash("sha256").update(resolvedSessionSecret, "utf8").digest();
+
 function deriveTokenEncryptionKey(material: string, version: string): Buffer {
   return Buffer.from(hkdfSync("sha256", Buffer.from(material, "utf8"), Buffer.from(version, "utf8"), TOKEN_ENCRYPTION_KDF_CONTEXT, 32));
 }
@@ -256,13 +259,15 @@ function decryptTokenCache(value: string): DecryptTokenCacheResult {
 
   if (segments.length === 4) {
     if (segments[0] !== TOKEN_ENCRYPTION_VERSION_PREFIX) return { cache: null, reason: "unknown-version" };
-    const keysToTry = [tokenEncryptionKeys.current, tokenEncryptionKeys.previous].filter(
-      (entry): entry is TokenEncryptionKey => Boolean(entry),
-    );
+    const keysToTry = [
+      tokenEncryptionKeys.current.key,
+      tokenEncryptionKeys.previous?.key ?? null,
+      legacyTokenEncryptionKey,
+    ].filter((entry): entry is Buffer => Boolean(entry));
     let lastError: unknown = null;
-    for (const keyEntry of keysToTry) {
+    for (const key of keysToTry) {
       try {
-        return decryptTokenCacheWithKey(segments[1] ?? "", segments[2] ?? "", segments[3] ?? "", keyEntry.key);
+        return decryptTokenCacheWithKey(segments[1] ?? "", segments[2] ?? "", segments[3] ?? "", key);
       } catch (error) {
         lastError = error;
       }
