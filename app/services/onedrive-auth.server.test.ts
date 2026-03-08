@@ -25,6 +25,13 @@ const { mockStoreRefreshFailure } = vi.hoisted(() => ({
     mockRefreshFailures.set(sessionId, message);
   }),
 }));
+const { mockStoreTokenForSession } = vi.hoisted(() => ({
+  mockStoreTokenForSession: vi.fn(
+    async (sessionId: string, cache: { accessToken: string; refreshToken: string | null; expiresAt: number }) => {
+      mockSessionStore.set(sessionId, cache);
+    },
+  ),
+}));
 const { mockWaitForRefreshOutcome } = vi.hoisted(() => ({
   mockWaitForRefreshOutcome: vi.fn(async (sessionId: string) => {
     for (let attempt = 0; attempt < 30; attempt++) {
@@ -43,12 +50,18 @@ const { mockWaitForRefreshOutcome } = vi.hoisted(() => ({
 }));
 
 vi.mock("./onedrive-oauth-session.server", () => ({
+  OAuthSessionTokenCryptoError: class OAuthSessionTokenCryptoError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "OAuthSessionTokenCryptoError";
+    }
+  },
+  isOAuthSessionTokenCryptoError: (error: unknown) =>
+    error instanceof Error && error.name === "OAuthSessionTokenCryptoError",
   OAuthSessionStoreUnavailableError: class OAuthSessionStoreUnavailableError extends Error {},
   isOAuthSessionStoreUnavailableError: (error: unknown) => error instanceof Error && error.name === "OAuthSessionStoreUnavailableError",
   ensureOAuthSessionStoreAvailable: vi.fn(async () => {}),
-  storeTokenForSession: vi.fn(async (sessionId: string, cache: { accessToken: string; refreshToken: string | null; expiresAt: number }) => {
-    mockSessionStore.set(sessionId, cache);
-  }),
+  storeTokenForSession: mockStoreTokenForSession,
   getTokenForSession: vi.fn(async (sessionId: string | null) => (sessionId ? mockSessionStore.get(sessionId) ?? null : null)),
   deleteTokenForSession: vi.fn(async (sessionId: string) => {
     mockSessionStore.delete(sessionId);
@@ -84,6 +97,7 @@ describe("onedrive-auth refresh single-flight", () => {
     mockRefreshFailures.clear();
     mockTryAcquireRefreshLock.mockClear();
     mockReleaseRefreshLock.mockClear();
+    mockStoreTokenForSession.mockClear();
     mockStoreRefreshFailure.mockClear();
     mockWaitForRefreshOutcome.mockClear();
     delete process.env.REDIS_URL;
@@ -248,6 +262,41 @@ describe("onedrive-auth refresh single-flight", () => {
     mockStoreRefreshFailure.mockRejectedValueOnce(new Error("redis write timed out"));
 
     await expect(getAccessToken(request)).rejects.toThrow(/timed out after \d+ms/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("token暗号化失敗は refresh failure に保存しない", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    await persistTokenForSession(sessionId, {
+      accessToken: "expired-access",
+      refreshToken: "refresh-token-1",
+      expiresAt: Date.now() - 1000,
+    });
+    vi.spyOn(onedriveOAuthSessionCookie, "parse").mockResolvedValue(sessionId as never);
+    const request = {
+      headers: { get: (name: string) => (name.toLowerCase() === "cookie" ? "onedrive_oauth_session=stub" : null) },
+    } as Request;
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: "new-access-token",
+          refresh_token: "refresh-token-2",
+          expires_in: 3600,
+          token_type: "Bearer",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    mockStoreTokenForSession.mockRejectedValueOnce(
+      Object.assign(new Error("OneDrive token crypto encrypt failed: cipher failed"), {
+        name: "OAuthSessionTokenCryptoError",
+      }),
+    );
+
+    await expect(getAccessToken(request)).rejects.toThrow("OneDrive token crypto encrypt failed: cipher failed");
+    expect(mockStoreRefreshFailure).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

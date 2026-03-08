@@ -11,6 +11,7 @@ import { createCookie } from "react-router";
 import {
   clearRefreshFailure,
   getTokenForSession,
+  isOAuthSessionTokenCryptoError,
   OAuthSessionStoreUnavailableError,
   releaseRefreshLock,
   storeTokenForSession,
@@ -249,7 +250,7 @@ async function refreshAccessTokenForSession(sessionId: string, refreshToken: str
       await persistTokenForSession(sessionId, refreshed);
       return refreshed;
     } catch (error) {
-      if (!(error instanceof OAuthSessionStoreUnavailableError)) {
+      if (!(error instanceof OAuthSessionStoreUnavailableError) && !isOAuthSessionTokenCryptoError(error)) {
         const message = error instanceof Error ? error.message : String(error);
         try {
           await storeRefreshFailure(sessionId, message, REFRESH_FAILURE_TTL_SECONDS);
