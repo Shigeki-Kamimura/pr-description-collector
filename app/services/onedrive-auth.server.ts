@@ -11,6 +11,7 @@ import { createCookie } from "react-router";
 import {
   clearRefreshFailure,
   getTokenForSession,
+  isOAuthSessionTokenCryptoError,
   OAuthSessionStoreUnavailableError,
   releaseRefreshLock,
   storeTokenForSession,
@@ -57,6 +58,18 @@ type TokenResponse = {
   token_type: string;
   scope?: string;
 };
+
+// OAuth セッションに token が存在しないことを示す専用エラー。
+export class OneDriveOAuthTokenMissingError extends Error {
+  constructor(message = "OneDrive OAuth token is missing.") {
+    super(message);
+    this.name = "OneDriveOAuthTokenMissingError";
+  }
+}
+
+export function isOneDriveOAuthTokenMissingError(error: unknown): error is OneDriveOAuthTokenMissingError {
+  return error instanceof OneDriveOAuthTokenMissingError;
+}
 
 function isOneDriveOAuthConfigured(): boolean {
   return Boolean(process.env.ONEDRIVE_CLIENT_ID && process.env.ONEDRIVE_CLIENT_SECRET && process.env.ONEDRIVE_REDIRECT_URI);
@@ -237,7 +250,7 @@ async function refreshAccessTokenForSession(sessionId: string, refreshToken: str
       await persistTokenForSession(sessionId, refreshed);
       return refreshed;
     } catch (error) {
-      if (!(error instanceof OAuthSessionStoreUnavailableError)) {
+      if (!(error instanceof OAuthSessionStoreUnavailableError) && !isOAuthSessionTokenCryptoError(error)) {
         const message = error instanceof Error ? error.message : String(error);
         try {
           await storeRefreshFailure(sessionId, message, REFRESH_FAILURE_TTL_SECONDS);
@@ -290,7 +303,7 @@ export async function getAccessToken(request?: Request): Promise<string> {
       return refreshed.accessToken;
     }
 
-    throw new Error("OneDrive OAuth token がありません。/auth/onedrive/login で認証してください。");
+    throw new OneDriveOAuthTokenMissingError("OneDrive OAuth token is missing. Please re-authenticate.");
   }
 
   throw new Error(

@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./api.onedrive.session-status";
-import { getAccessToken } from "../services/onedrive-auth.server";
+import { getAccessToken, OneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { createOneDriveService } from "../services/onedrive.server";
 import { OAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 
 vi.mock("../services/onedrive-auth.server", () => ({
+  OneDriveOAuthTokenMissingError: class OneDriveOAuthTokenMissingError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "OneDriveOAuthTokenMissingError";
+    }
+  },
   getAccessToken: vi.fn(),
+  isOneDriveOAuthTokenMissingError: (error: unknown) =>
+    error instanceof Error && error.name === "OneDriveOAuthTokenMissingError",
 }));
 
 vi.mock("../services/onedrive.server", () => ({
@@ -75,6 +83,39 @@ describe("api.onedrive.session-status loader", () => {
     expect(body.ok).toBe(false);
     expect(body.isAuthError).toBe(false);
     expect(body.error).toContain("OneDrive 認証基盤で一時障害");
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("token欠落は認証エラーとして401を返す", async () => {
+    vi.mocked(getAccessToken).mockRejectedValue(new OneDriveOAuthTokenMissingError("token missing"));
+
+    const response = await loader({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+    };
+
+    expect(response.status).toBe(401);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(true);
+  });
+
+  it("token crypto 障害は認証エラー扱いせず502を返す", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(getAccessToken).mockRejectedValue(new Error("OneDrive token crypto encrypt failed: cipher failed"));
+
+    const response = await loader({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+    };
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });

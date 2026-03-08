@@ -31,6 +31,11 @@ vi.mock("../services/csrf.server", () => ({
   verifyCsrfToken: vi.fn(),
 }));
 
+vi.mock("../services/onedrive-auth.server", () => ({
+  isOneDriveOAuthTokenMissingError: (error: unknown) =>
+    error instanceof Error && error.name === "OneDriveOAuthTokenMissingError",
+}));
+
 type MockGitHubService = {
   getPullRequest: ReturnType<typeof vi.fn>;
 };

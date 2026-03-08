@@ -59,6 +59,11 @@ vi.mock("../services/evidence-images.server", () => ({
   buildImageBaseName: vi.fn(),
 }));
 
+vi.mock("../services/onedrive-auth.server", () => ({
+  isOneDriveOAuthTokenMissingError: (error: unknown) =>
+    error instanceof Error && error.name === "OneDriveOAuthTokenMissingError",
+}));
+
 type MockGitHubService = {
   getPullRequest: ReturnType<typeof vi.fn>;
   getPullRequestReviews: ReturnType<typeof vi.fn>;
