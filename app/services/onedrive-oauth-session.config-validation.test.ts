@@ -79,4 +79,16 @@ describe("onedrive-oauth-session key version validation", () => {
       `ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION の値 "${version}" は無効です。`,
     );
   });
+
+  it("current と previous の key version が同一なら拒否される", async () => {
+    setBaseEnv();
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = "k-same";
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = "current-key-material";
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION = "k-same";
+    process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL = "previous-key-material";
+
+    await expect(importSessionModule()).rejects.toThrow(
+      "ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION は current と異なる値を指定してください。",
+    );
+  });
 });

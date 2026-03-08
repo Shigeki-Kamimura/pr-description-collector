@@ -82,6 +82,11 @@ function resolveTokenEncryptionKeys(): { current: TokenEncryptionKey; previous: 
     );
   }
   validateTokenEncryptionKeyVersion("ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION", TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION);
+  if (TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION === TOKEN_ENCRYPTION_CURRENT_KEY_VERSION) {
+    throw new Error(
+      "ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION は current と異なる値を指定してください。同一値はローテーション設定ミスです。",
+    );
+  }
   const previous: TokenEncryptionKey = {
     version: TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION,
     key: deriveTokenEncryptionKey(TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL, TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION),
