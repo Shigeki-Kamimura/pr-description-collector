@@ -485,7 +485,9 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
     const message = isAuthLike
-      ? "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
+      ? parsed.code === "accessDenied"
+        ? "OneDrive へのアクセスが拒否されました。権限を確認してください。"
+        : "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
       : "OneDrive への保存に失敗しました。しばらくしてから再実行してください。";
     // 認証エラーっぽい場合でも、エラーコードや詳細メッセージがない場合は定型の再認証メッセージを返す。これにより、OneDrive API のエラーレスポンスの形式が変わったり、予期しないエラーが発生した場合でも、ユーザーには再認証が必要な可能性があることを伝えることができる。
     if (!isAuthLike) {
@@ -511,7 +513,7 @@ export async function action({ request }: ActionFunctionArgs) {
           event: "onedrive.auth-failure",
           route: "api/onedrive/upload",
           error,
-          status: 401,
+          status: parsed.code === "accessDenied" ? 403 : 401,
           failureType: "onedrive-auth",
           extra: {
             code: parsed.code ?? null,
@@ -520,7 +522,7 @@ export async function action({ request }: ActionFunctionArgs) {
         }),
       );
     }
-    const status = isAuthLike ? 401 : 502;
+    const status = isAuthLike ? (parsed.code === "accessDenied" ? 403 : 401) : 502;
     return Response.json(
       {
         ok: false,
