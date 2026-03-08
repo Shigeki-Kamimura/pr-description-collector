@@ -37,6 +37,7 @@ export type TokenCache = {
 };
 // セッション秘密鍵から32byte鍵を導出し、token暗号化/復号で共通利用する。
 const tokenEncryptionKey = createHash("sha256").update(resolvedSessionSecret, "utf8").digest();
+const SESSION_ID_LOG_HASH_PREFIX_LENGTH = 12;
 
 // Redis 障害を認証切れと区別するための専用エラー。
 export class OAuthSessionStoreUnavailableError extends Error {
@@ -92,6 +93,10 @@ function toTokenCryptoError(action: "encrypt" | "decrypt", error: unknown): OAut
   return new OAuthSessionTokenCryptoError(`OneDrive token crypto ${action} failed: ${message}`, {
     cause: error,
   });
+}
+// sessionId を直接ログに出すのは避け、ハッシュ化して一部だけ出すことで、障害調査に必要な識別性を保ちつつ、セキュリティリスクを減らす。
+function toSessionIdLogHash(sessionId: string): string {
+  return createHash("sha256").update(sessionId, "utf8").digest("hex").slice(0, SESSION_ID_LOG_HASH_PREFIX_LENGTH);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -236,7 +241,7 @@ export async function getTokenForSession(sessionId: string | null): Promise<Toke
   const decrypted = decryptTokenCache(raw);
   if (!decrypted.cache) {
     logger.warn("Discarding invalid OneDrive OAuth session token.", {
-      sessionId,
+      sessionIdHash: toSessionIdLogHash(sessionId),
       reason: decrypted.reason,
     });
     await deleteCorruptedSessionKey(sessionId);
