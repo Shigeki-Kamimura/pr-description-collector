@@ -9,8 +9,10 @@
  * - 失敗時は UI が分岐しやすいよう `isAuthError` を返す
  */
 import type { LoaderFunctionArgs } from "react-router";
+import { logger } from "../services/logger.server";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { getAccessToken } from "../services/onedrive-auth.server";
+import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { createOneDriveService } from "../services/onedrive.server";
 
 export type ApiOneDriveSessionStatusResponse =
@@ -45,6 +47,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
+    if (isOAuthSessionStoreUnavailableError(error)) {
+      logger.error("OneDrive session-status failed due to session store outage.", {
+        message: error.message,
+      });
+      return Response.json(
+        {
+          ok: false,
+          error: "OneDrive 認証基盤で一時障害が発生しています。時間をおいて再試行してください。",
+          isAuthError: false,
+        } satisfies ApiOneDriveSessionStatusResponse,
+        { status: 503 },
+      );
+    }
     const rawMessage = error instanceof Error ? error.message : "Unknown error";
     const parsed = extractOneDriveError(rawMessage);
     const isAuthLike = isOneDriveAuthLikeError(rawMessage);
@@ -58,7 +73,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     if (!isAuthLike) {
       // 認証エラーの可能性が低いエラーは、内部的な詳細をログに残す。
       // これにより、ユーザーには定型のエラーメッセージのみを返しつつ、開発者は問題の診断に必要な情報を得られるようになる。
-      console.error("OneDrive session-status failed.", {
+      logger.error("OneDrive session-status failed.", {
         message: rawMessage,
         code: parsed.code,
         detail: parsed.message,

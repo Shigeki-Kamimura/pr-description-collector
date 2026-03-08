@@ -20,18 +20,17 @@ A modern, production-ready template for building full-stack React applications u
 - GitHub: `GITHUB_TOKEN`（または `GITHUB_PAT` / `GITHUB_APP_*`）
 - OneDrive: `ONEDRIVE_ACCESS_TOKEN`（開発用・`/me/drive` を操作できるトークン）
 - OneDrive OAuth（サーバーサイド）: `ONEDRIVE_TENANT` / `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` / `ONEDRIVE_REDIRECT_URI`
-- OneDrive OAuth token store: `ONEDRIVE_TOKEN_STORE_MAX_SESSIONS`（任意）/ `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION`（非推奨の暫定フラグ）
+- OneDrive OAuth token store: `REDIS_URL`（必須）/ `REDIS_TIMEOUT_MS`（任意）
 - OneDrive 保存先: `ONEDRIVE_BASE_FOLDER`（任意）/ `ONEDRIVE_WORK_FOLDER`（任意）
 - `SESSION_SECRET` は production で必須（development 未設定時は固定フォールバックあり、明示設定推奨）
 - 開発サーバー: `DEV_SERVER_HOST` / `DEV_SERVER_PORT`（ViteはHTTPで待受。利用者アクセスはHTTPS終端を必須とする）
 - 例: [.env.example](.env.example)
 
-### OneDrive OAuth Token Store (Production Note)
+### OneDrive OAuth Token Store
 
-- 本番環境でのメモリ内 `tokenStore` 運用は非推奨です。
-- `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true` は一時回避用です。
-- メモリ運用のまま本番で再起動・再デプロイ・スケールアウトすると、OneDrive OAuth セッションは全喪失します。
-- 本番では Redis / DB などの永続ストア実装を必須にしてください。
+- OneDrive OAuth のサーバー側セッションは Redis を必須とします。
+- `REDIS_URL` 未設定または Redis 障害時は、OAuth login / callback / セッション参照 / token refresh は `503` で fail-closed になります。
+- Redis 障害は認証切れとして扱わず、一時的なシステム障害として返します。
 
 ### Installation
 
@@ -144,8 +143,7 @@ docker run \
 Notes:
 
 - `SESSION_SECRET` は production で必須です。
-- OneDrive OAuth を production で使う場合は、永続 token store 実装が必要です。
-- 一時運用でメモリ token store を使う場合のみ `ONEDRIVE_ALLOW_IN_MEMORY_TOKEN_STORE_IN_PRODUCTION=true` を明示してください。
+- OneDrive OAuth を使う場合は `REDIS_URL` が必須です。
 - `http://localhost:3000` への直アクセスは、コンテナの疎通確認用です。
 - ブラウザでの実運用確認や OneDrive OAuth は、HTTPS 終端された入口（Nginx / ingress / load balancer）配下で行ってください。
 - コンテナには `/api/health` を見る `HEALTHCHECK` を設定しています。

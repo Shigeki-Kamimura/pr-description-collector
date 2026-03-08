@@ -124,11 +124,30 @@
    - `/me` から保存実行者を特定できない場合（`userPrincipalName` / `displayName` ともに取得不可）は、監査性を優先して保存処理を中止し、エラーとして扱う。
    - 保存処理の開始前に `/me/drive` で OneDrive セッションの有効性を検証し、未認証時は保存処理を実行しない。
 
+4. **OneDrive OAuth / セッション管理**
+   - OneDrive OAuth のサーバー側セッション情報は Redis に保存する。
+   - Redis に保存する対象は、`sessionId` に紐づく `accessToken`、`refreshToken`、`expiresAt` とする。
+   - 本番環境では、OneDrive OAuth の認証継続性を保つため、アプリ再起動・再デプロイ・スケールアウト後も Redis 上のセッション情報を参照できること。
+   - OneDrive OAuth のサーバー側セッション情報は、本番環境でプロセスメモリのみへ保持してはならない。
+   - 同一 `sessionId` に対する access token refresh は多重実行を防止する。複数アプリインスタンス環境でも、同時 refresh による不整合を起こしてはならない。
+   - OAuth の `state` およびブラウザ整合性確認用の短期値は、署名付き Secure Cookie で保持してよい。Redis 保存は必須としない。
+   - CSRF 対策は署名付き Secure Cookie を用いた方式を維持してよく、Redis 保存は必須としない。
+   - OneDrive OAuth を利用するすべての外部公開経路は HTTPS を必須とし、HTTP では認証フローを開始・完了させない。
+   - `SESSION_SECRET` は production で必須とし、Cookie 署名の信頼境界を維持する。
+   - Redis は OneDrive OAuth のサーバー側セッションストアとして必須とする。Redis が利用不能な場合、OAuth フローは fail-closed で停止し、メモリストア等への自動 fallback は行わない。
+   - Redis 接続障害、timeout、読み書き失敗時は、OAuth 開始、callback、セッション参照、access token refresh を `503 Service Unavailable` として扱う。
+   - Redis 障害時は、ユーザーに認証切れや再認証要求として見せてはならない。UI には「一時的なシステム障害」の種別で表示し、認証エラーと明確に区別する。
+   - Redis 障害時は、中途半端な session 発行、token 保存、token refresh の部分成功を許容しない。
+   - サーバーログには Redis 障害であることを識別可能なエラー情報を残し、認証失敗ログと混同しないこと。
+
 ## 非機能要件
 - **速度**: 数十〜数百行程度の入力で即時に解析できる。 
 - **可用性**: ローカル環境で動作（Remix の SSR を前提）。 
 - **可読性**: UI は最小限でも、結果の視認性（チェック状態・行番号）が確保される。 
 - **保管性**: OneDrive 上に JSON と画像が保存されること。 
+- **セッション継続性**: OneDrive OAuth セッションは、アプリ再起動・再デプロイ・複数インスタンス構成でも継続利用できること。
+- **セキュリティ**: OneDrive OAuth を利用する外部公開経路は HTTPS を必須とし、認証系 Cookie と CSRF Cookie は Secure 属性付きで扱うこと。
+- **障害時の明確性**: Redis 障害と認証切れをユーザー向け表示およびサーバーログで明確に区別できること。
 
 ## 入出力仕様
 ### 入力
@@ -169,6 +188,9 @@
 
 ## 受け入れ基準
 - レビュー完了後、PR description の JSON と画像が OneDrive に保存される。 
+- OneDrive OAuth 利用時、Redis に保存されたサーバー側セッション情報を用いて、再起動後も認証継続できる。
+- HTTP 入口では OneDrive OAuth の login / callback を開始・完了できず、HTTPS 入口でのみ利用できる。
+- Redis 障害時、OneDrive OAuth の login / callback / セッション参照 / token refresh は `503` 系で停止し、UI では認証切れではなく一時的なシステム障害として表示される。
 
 ## 既存実装との対応
 - 解析処理は `Get Description` で行う。

@@ -10,6 +10,8 @@
  * - developmentでは未設定時に固定の開発用シークレットを使い、警告を出す。
  * - `resolvedSessionSecret` をexportし、Cookie `secrets` に共通利用させる。
  */
+import { logger } from "./logger.server";
+
 const sessionSecret = process.env.SESSION_SECRET ?? "";
 export const isProduction = process.env.NODE_ENV === "production";
 const defaultDevSessionSecret =
@@ -24,7 +26,7 @@ if (!resolvedSessionSecret) {
 }
 
 if (usingDefaultDevSessionSecret) {
-  console.warn(
+  logger.warn(
     "SESSION_SECRET が未設定のため、固定の開発用シークレットを使用しています。ローカルの安定運用のため、.env に SESSION_SECRET を明示設定してください。",
   );
 }

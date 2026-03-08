@@ -10,6 +10,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./api.onedrive.evidence-image";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
+import { OAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { signEvidenceImagePath } from "../services/evidence-image-token.server";
 
 vi.mock("../services/onedrive.server", () => ({
@@ -212,5 +213,19 @@ describe("api.onedrive.evidence-image loader", () => {
     const response = await loader({ request } as never);
 
     expect(response.status).toBe(413);
+  });
+
+  it("Redis障害は503で返す", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    onedrive.getBinary.mockRejectedValue(new OAuthSessionStoreUnavailableError("redis down"));
+
+    const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/a.png");
+    const response = await loader({ request } as never);
+    const body = await response.text();
+
+    expect(response.status).toBe(503);
+    expect(body).toBe("onedrive session store unavailable");
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

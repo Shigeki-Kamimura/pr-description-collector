@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { action } from "./api.onedrive.upload";
 import { createGitHubServiceFromEnv } from "../services/github.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
+import { OAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { parseChecklist } from "../services/checklist";
 import { verifyCsrfToken } from "../services/csrf.server";
 import { validatePrRefInput } from "../services/validation";
@@ -264,6 +265,27 @@ describe("api.onedrive.upload action", () => {
     expect(body.error).toBe("OneDrive 認証が切れています。再認証してから保存をやり直してください。");
     expect(body.errorCode).toBeUndefined();
     expect(body.errorMessage).toBeUndefined();
+  });
+
+  it("Redis障害は503で返し、保存処理へ進まない", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    onedrive.getDriveInfo.mockRejectedValue(new OAuthSessionStoreUnavailableError("redis down"));
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+    };
+
+    expect(response.status).toBe(503);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toContain("OneDrive 認証基盤で一時障害");
+    expect(github.getPullRequest).not.toHaveBeenCalled();
+    expect(onedrive.saveText).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("OneDrive非認証エラーは内部詳細を露出せず定型メッセージで返す", async () => {

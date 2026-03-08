@@ -8,8 +8,10 @@
  * - チェックリストカード描画時に、archive.json の onedrivePath から画像を取得するとき。
  */
 import type { LoaderFunctionArgs } from "react-router";
+import { logger } from "../services/logger.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import {
   isEvidenceImageTokenFormat,
   verifyEvidenceImagePathToken,
@@ -104,6 +106,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     });
   } catch (error) {
+    if (isOAuthSessionStoreUnavailableError(error)) {
+      logger.error("OneDrive evidence-image failed due to session store outage.", {
+        message: error.message,
+      });
+      return textResponse(503, "onedrive session store unavailable");
+    }
     if (error instanceof OneDriveApiError) {
       if (error.status === 404) {
         return textResponse(404, "evidence image not found");

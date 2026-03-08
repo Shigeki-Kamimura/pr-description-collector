@@ -13,7 +13,9 @@ import {
   type PullRequestRef,
 } from "../services/github.server";
 import { getHttpStatus } from "../services/http-status";
+import { logger } from "../services/logger.server";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
 // 画像保存ユーティリティ
 import {
@@ -254,7 +256,7 @@ export async function action({ request }: ActionFunctionArgs) {
               const reason = imageCleanupError instanceof Error ? imageCleanupError.message : String(imageCleanupError);
               evidenceDeleteFailureCount += 1;
               lastEvidenceDeleteFailureReason = reason.trim() || "unknown";
-              console.warn("OneDrive rollback image cleanup skipped.", {
+              logger.warn("OneDrive rollback image cleanup skipped.", {
                 imagePath,
                 reason,
               });
@@ -279,7 +281,7 @@ export async function action({ request }: ActionFunctionArgs) {
               imagesFolderCleanupError instanceof Error
                 ? imagesFolderCleanupError.message
                 : String(imagesFolderCleanupError);
-            console.warn("OneDrive rollback images folder cleanup skipped.", {
+            logger.warn("OneDrive rollback images folder cleanup skipped.", {
               folderPath,
               reason,
             });
@@ -296,7 +298,7 @@ export async function action({ request }: ActionFunctionArgs) {
             } catch (folderCleanupError) {
               const reason = folderCleanupError instanceof Error ? folderCleanupError.message : String(folderCleanupError);
               rollbackFolderCleanup = `failed (${reason.trim() || "unknown"})`;
-              console.warn("OneDrive rollback folder cleanup skipped.", {
+              logger.warn("OneDrive rollback folder cleanup skipped.", {
                 folderPath,
                 reason,
               });
@@ -350,6 +352,19 @@ export async function action({ request }: ActionFunctionArgs) {
       { status: 200 },
     );
   } catch (error) {
+    if (isOAuthSessionStoreUnavailableError(error)) {
+      logger.error("OneDrive upload failed due to session store outage.", {
+        message: error.message,
+      });
+      return Response.json(
+        {
+          ok: false,
+          error: "OneDrive 認証基盤で一時障害が発生しています。時間をおいて再試行してください。",
+          isAuthError: false,
+        } satisfies ApiOneDriveUploadResponse,
+        { status: 503 },
+      );
+    }
     const rawMessage = error instanceof Error ? error.message : "Unknown error";
     if (failureDomain === "github") {
       const status = getHttpStatus(error);
@@ -443,7 +458,7 @@ export async function action({ request }: ActionFunctionArgs) {
       : "OneDrive への保存に失敗しました。しばらくしてから再実行してください。";
     // 認証エラーっぽい場合でも、エラーコードや詳細メッセージがない場合は定型の再認証メッセージを返す。これにより、OneDrive API のエラーレスポンスの形式が変わったり、予期しないエラーが発生した場合でも、ユーザーには再認証が必要な可能性があることを伝えることができる。
     if (!isAuthLike) {
-      console.error("OneDrive upload failed.", {
+      logger.error("OneDrive upload failed.", {
         message: rawMessage,
         code: parsed.code,
         detail: parsed.message,
@@ -863,4 +878,3 @@ async function loadExistingEvidenceBySource(
     throw error;
   }
 }
-

@@ -620,12 +620,16 @@ export async function createOneDriveServiceFromEnv(request?: Request): Promise<O
   const accessToken = process.env.ONEDRIVE_ACCESS_TOKEN ?? "";
   // request がある API 経路では、必ずその request の OAuth セッションを使う。
   const { getAccessToken } = await import("./onedrive-auth.server");
+  const { isOAuthSessionStoreUnavailableError } = await import("./onedrive-oauth-session.server");
 
   if (request) {
     try {
       const oauthToken = await getAccessToken(request);
       return createOneDriveService({ accessToken: oauthToken });
     } catch (oauthError) {
+      if (isOAuthSessionStoreUnavailableError(oauthError)) {
+        throw oauthError;
+      }
       const reason = oauthError instanceof Error ? oauthError.message : String(oauthError);
       throw new Error(
         `OneDrive OAuth セッションからアクセストークンを取得できませんでした: ${reason} ` +

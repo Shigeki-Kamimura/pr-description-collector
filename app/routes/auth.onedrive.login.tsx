@@ -6,6 +6,8 @@ import { redirect } from "react-router";
 // HTTPSでのアクセスを要求する。
 // OneDrive OAuthはセキュアな環境でのみ動作するため、HTTPSでない場合はエラーレスポンスを返す。
 import { isHttpsRequest } from "../services/https-validation.server";
+import { logger } from "../services/logger.server";
+import { ensureOAuthSessionStoreAvailable, isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import {
   buildAuthorizeUrl,
   onedriveOAuthBindCookie,
@@ -20,6 +22,21 @@ export async function loader({ request }: { request: Request }) {
       "HTTPS endpoint is required for OneDrive OAuth. Secure Cookie is unavailable on HTTP. Access via https://localhost:5173.",
       { status: 400 },
     );
+  }
+
+  try {
+    await ensureOAuthSessionStoreAvailable();
+  } catch (error) {
+    if (isOAuthSessionStoreUnavailableError(error)) {
+      logger.error("OneDrive OAuth session store failed.", {
+        message: error.message,
+      });
+      return new Response(
+        "OneDrive 認証基盤で一時障害が発生しています。時間をおいて再試行してください。",
+        { status: 503 },
+      );
+    }
+    throw error;
   }
 
   // OAuth開始時のブラウザ文脈をcallbackで検証するため、bind IDをstateへ組み込む。
