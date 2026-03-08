@@ -15,6 +15,7 @@ import {
 import { getHttpStatus } from "../services/http-status";
 import { logger } from "../services/logger.server";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
 // 画像保存ユーティリティ
@@ -439,7 +440,8 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const parsed = extractOneDriveError(rawMessage);
-    const isAuthLike = isOneDriveAuthLikeError(rawMessage); // エラーメッセージの解析結果が認証エラーっぽいかどうか。これが true の場合は 401、そうでない場合は 502 として返す。
+    const isAuthLike =
+      isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage); // エラーメッセージ依存だけにせず、専用エラー型も認証エラーとして扱う。
     if (error instanceof ArchiveJsonInvalidError) {
       return Response.json(
         {
@@ -649,7 +651,7 @@ async function saveEvidenceImages({
       const rawMessage = error instanceof Error ? error.message : String(error);
       // OneDrive への保存に失敗した場合、認証エラーっぽいかどうかに関わらず、まずはエラーメッセージを解析してみる。
       // これにより、OneDrive API のエラーレスポンスの形式が変わったり、予期しないエラーが発生した場合でも、ユーザーには再認証が必要な可能性があることを伝えることができる。
-      if (isOneDriveAuthLikeError(rawMessage)) {
+      if (isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage)) {
         const savedPaths = results
           .filter((record) => record.status === "success" && record.onedrivePath)
           .map((record) => record.onedrivePath as string);

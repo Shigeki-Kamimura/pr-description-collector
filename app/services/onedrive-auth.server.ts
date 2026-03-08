@@ -58,6 +58,18 @@ type TokenResponse = {
   scope?: string;
 };
 
+// OAuth セッションに token が存在しないことを示す専用エラー。
+export class OneDriveOAuthTokenMissingError extends Error {
+  constructor(message = "OneDrive OAuth token is missing.") {
+    super(message);
+    this.name = "OneDriveOAuthTokenMissingError";
+  }
+}
+
+export function isOneDriveOAuthTokenMissingError(error: unknown): error is OneDriveOAuthTokenMissingError {
+  return error instanceof OneDriveOAuthTokenMissingError;
+}
+
 function isOneDriveOAuthConfigured(): boolean {
   return Boolean(process.env.ONEDRIVE_CLIENT_ID && process.env.ONEDRIVE_CLIENT_SECRET && process.env.ONEDRIVE_REDIRECT_URI);
 }
@@ -290,7 +302,7 @@ export async function getAccessToken(request?: Request): Promise<string> {
       return refreshed.accessToken;
     }
 
-    throw new Error("OneDrive OAuth token がありません。/auth/onedrive/login で認証してください。");
+    throw new OneDriveOAuthTokenMissingError("OneDrive OAuth token is missing. Please re-authenticate.");
   }
 
   throw new Error(

@@ -11,6 +11,7 @@ import type { LoaderFunctionArgs } from "react-router";
 import { logger } from "../services/logger.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import {
   isEvidenceImageTokenFormat,
@@ -139,7 +140,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
 
     const rawMessage = error instanceof Error ? error.message : String(error);
-    const isAuthLike = isOneDriveAuthLikeError(rawMessage);
+    const isAuthLike = isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage);
     if (isAuthLike) {
       const parsed = extractOneDriveError(rawMessage);
       const status = parsed.code === "accessDenied" ? 403 : 401;

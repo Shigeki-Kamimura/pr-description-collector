@@ -22,8 +22,8 @@ describe("onedrive-errors", () => {
     });
   });
 
-  it("isOneDriveAuthLikeError は token欠落メッセージを認証エラーとして扱う", () => {
-    const raw = "OneDrive OAuth token がありません。/auth/onedrive/login で認証してください。";
+  it("isOneDriveAuthLikeError は 401 エラー文言を認証エラーとして扱う", () => {
+    const raw = "OneDrive API error (401) [code=InvalidAuthenticationToken]: token expired";
     expect(isOneDriveAuthLikeError(raw)).toBe(true);
   });
 

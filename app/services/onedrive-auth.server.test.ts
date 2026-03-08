@@ -64,6 +64,8 @@ vi.mock("./onedrive-oauth-session.server", () => ({
 
 import {
   getAccessToken,
+  isOneDriveOAuthTokenMissingError,
+  OneDriveOAuthTokenMissingError,
   onedriveOAuthSessionCookie,
   persistTokenForSession,
 } from "./onedrive-auth.server";
@@ -247,5 +249,18 @@ describe("onedrive-auth refresh single-flight", () => {
 
     await expect(getAccessToken(request)).rejects.toThrow(/timed out after \d+ms/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("session token が存在しない場合は専用エラーを返す", async () => {
+    vi.spyOn(onedriveOAuthSessionCookie, "parse").mockResolvedValue("session-missing-token" as never);
+    const request = {
+      headers: { get: (name: string) => (name.toLowerCase() === "cookie" ? "onedrive_oauth_session=stub" : null) },
+    } as Request;
+
+    await expect(getAccessToken(request)).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(OneDriveOAuthTokenMissingError);
+      expect(isOneDriveOAuthTokenMissingError(error)).toBe(true);
+      return true;
+    });
   });
 });

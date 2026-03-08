@@ -11,7 +11,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { logger } from "../services/logger.server";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
-import { getAccessToken } from "../services/onedrive-auth.server";
+import { getAccessToken, isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { createOneDriveService } from "../services/onedrive.server";
 
@@ -62,7 +62,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
     const rawMessage = error instanceof Error ? error.message : "Unknown error";
     const parsed = extractOneDriveError(rawMessage);
-    const isAuthLike = isOneDriveAuthLikeError(rawMessage);
+    const isAuthLike = isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage);
 
     const hasDetail = Boolean(parsed.code || parsed.message);
     const message = isAuthLike

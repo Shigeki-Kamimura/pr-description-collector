@@ -12,6 +12,7 @@ import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/git
 import { logger } from "../services/logger.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
 import { isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { validatePrRefInput } from "../services/validation";
 import { verifyCsrfToken } from "../services/csrf.server";
 import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
@@ -436,7 +437,7 @@ export async function action({ request }: ActionFunctionArgs) {
         { status: 502 },
       );
     }
-    const isAuthLike = isOneDriveAuthLikeError(rawMessage);
+    const isAuthLike = isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage);
     const message = isAuthLike
       ? "OneDrive 認証が切れています。再認証してから再実行してください。"
       : "OneDrive 上の archive.json 取得に失敗しました。しばらくしてから再実行してください。";

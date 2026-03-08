@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./api.onedrive.session-status";
-import { getAccessToken } from "../services/onedrive-auth.server";
+import { getAccessToken, OneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { createOneDriveService } from "../services/onedrive.server";
 import { OAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 
 vi.mock("../services/onedrive-auth.server", () => ({
+  OneDriveOAuthTokenMissingError: class OneDriveOAuthTokenMissingError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "OneDriveOAuthTokenMissingError";
+    }
+  },
   getAccessToken: vi.fn(),
+  isOneDriveOAuthTokenMissingError: (error: unknown) =>
+    error instanceof Error && error.name === "OneDriveOAuthTokenMissingError",
 }));
 
 vi.mock("../services/onedrive.server", () => ({
@@ -80,9 +88,7 @@ describe("api.onedrive.session-status loader", () => {
   });
 
   it("token欠落は認証エラーとして401を返す", async () => {
-    vi.mocked(getAccessToken).mockRejectedValue(
-      new Error("OneDrive OAuth token がありません。/auth/onedrive/login で認証してください。"),
-    );
+    vi.mocked(getAccessToken).mockRejectedValue(new OneDriveOAuthTokenMissingError("token missing"));
 
     const response = await loader({ request: buildRequest() } as never);
     const body = (await response.json()) as {
