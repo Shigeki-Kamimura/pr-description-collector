@@ -131,6 +131,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
         return textResponse(401, "onedrive auth required");
       }
       if (error.status === 429) {
+        // OneDrive APIのレートリミットに達した場合は、429を返す。これにより、フロントエンドは一時的な過負荷状態であることを認識し、適切にユーザーにフィードバックできるようになる。
+        logger.warn(
+          "OneDrive evidence-image rate limited.",
+          buildOneDriveAuditErrorPayload({
+            event: "onedrive.evidence-image-fetch-failed",
+            route: "api/onedrive/evidence-image",
+            error,
+            status: 429,
+            failureType: "onedrive-rate-limit",
+            extra: {
+              retryAfterRaw: error.retryAfterRaw ?? null,
+              retryAfterSeconds: error.retryAfterSeconds ?? null,
+              retryAfterAtIso: error.retryAfterAtIso ?? null,
+            },
+          }),
+        );
         return textResponse(429, "onedrive rate limited", {
           ...(error.retryAfterRaw
             ? { "Retry-After": error.retryAfterRaw }

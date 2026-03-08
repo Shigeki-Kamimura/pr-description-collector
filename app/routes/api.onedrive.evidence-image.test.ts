@@ -191,12 +191,23 @@ describe("api.onedrive.evidence-image loader", () => {
   });
 
   it("429 は Retry-After を返す", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     onedrive.getBinary.mockRejectedValue(new OneDriveApiError("throttled", 429, "activityLimitReached", 8));
     const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/a.png");
     const response = await loader({ request } as never);
 
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("8");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "OneDrive evidence-image rate limited.",
+      expect.objectContaining({
+        event: "onedrive.evidence-image-fetch-failed",
+        route: "api/onedrive/evidence-image",
+        status: 429,
+        failureType: "onedrive-rate-limit",
+      }),
+    );
+    warnSpy.mockRestore();
   });
 
   it("429 の Retry-After が日時形式でもそのまま返す", async () => {
