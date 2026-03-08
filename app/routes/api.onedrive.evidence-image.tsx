@@ -9,6 +9,7 @@
  */
 import type { LoaderFunctionArgs } from "react-router";
 import { logger } from "../services/logger.server";
+import { buildOneDriveAuditErrorPayload } from "../services/onedrive-audit-log.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
 import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
@@ -109,7 +110,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   } catch (error) {
     if (isOAuthSessionStoreUnavailableError(error)) {
       logger.error("OneDrive evidence-image failed due to session store outage.", {
-        message: error.message,
+        ...buildOneDriveAuditErrorPayload({
+          event: "onedrive.session-store-unavailable",
+          route: "api/onedrive/evidence-image",
+          error,
+          status: 503,
+          failureType: "session-store",
+        }),
       });
       return textResponse(503, "onedrive session store unavailable");
     }
@@ -144,9 +151,30 @@ export async function loader({ request }: LoaderFunctionArgs) {
     if (isAuthLike) {
       const parsed = extractOneDriveError(rawMessage);
       const status = parsed.code === "accessDenied" ? 403 : 401;
+      // auth-like でも accessDenied は 403 へ正規化して UI 側の分岐を安定させる。
+      logger.warn(
+        "OneDrive evidence-image auth-like failure.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.auth-failure",
+          route: "api/onedrive/evidence-image",
+          error,
+          status,
+          failureType: "onedrive-auth",
+        }),
+      );
       return textResponse(status, status === 403 ? "onedrive access denied" : "onedrive auth required");
     }
 
+    logger.error(
+      "OneDrive evidence-image fetch failed.",
+      buildOneDriveAuditErrorPayload({
+        event: "onedrive.evidence-image-fetch-failed",
+        route: "api/onedrive/evidence-image",
+        error,
+        status: 502,
+        failureType: "onedrive-non-auth",
+      }),
+    );
     return textResponse(502, "failed to fetch evidence image");
   }
 }

@@ -146,6 +146,7 @@
    - 推奨デプロイ方式: 互換性ギャップがある保存形式変更では、blue/green 等の一括切替方式を優先し、必要に応じて再認証影響を許容するメンテナンスウィンドウで実施すること。
    - 運用受入基準: 鍵ローテーション実施前に、`current` / `previous` の version と material が期待どおり設定されていることをチェックリストで確認し、確認記録を残すこと。
    - 監視要件: `unknown-key-version` および `invalid-segment-count` の警告ログ発生率を監視対象に含め、平常時しきい値を超過した場合は設定不整合またはデプロイ互換性問題としてアラートすること。
+   - 監査ログ要件: OneDrive OAuth/保存系の障害ログは構造化項目（`event`, `route`, `failureType`, `status`, `errorName`, `code`）を含め、`accessToken` / `refreshToken` / `secret` / `authorization` などの機微値は平文出力してはならない。
    - `SESSION_SECRET` が変更された場合、既存の暗号化済み OAuth セッションは復号不能となるため無効化され、再認証を要求する挙動を許容する。
    - Redis は OneDrive OAuth のサーバー側セッションストアとして必須とする。Redis が利用不能な場合、OAuth フローは fail-closed で停止し、メモリストア等への自動 fallback は行わない。
    - Redis 接続障害、timeout、読み書き失敗時は、OAuth 開始、callback、セッション参照、access token refresh を `503 Service Unavailable` として扱う。

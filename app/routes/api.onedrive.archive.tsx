@@ -10,6 +10,7 @@
 import type { ActionFunctionArgs } from "react-router";
 import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/github.server";
 import { logger } from "../services/logger.server";
+import { buildOneDriveAuditErrorPayload } from "../services/onedrive-audit-log.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
 import { isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
@@ -397,7 +398,13 @@ export async function action({ request }: ActionFunctionArgs) {
   } catch (error) {
     if (isOAuthSessionStoreUnavailableError(error)) {
       logger.error("OneDrive archive fetch failed due to session store outage.", {
-        message: error.message,
+        ...buildOneDriveAuditErrorPayload({
+          event: "onedrive.session-store-unavailable",
+          route: "api/onedrive/archive",
+          error,
+          status: 503,
+          failureType: "session-store",
+        }),
       });
       return Response.json(
         {
@@ -441,6 +448,31 @@ export async function action({ request }: ActionFunctionArgs) {
     const message = isAuthLike
       ? "OneDrive 認証が切れています。再認証してから再実行してください。"
       : "OneDrive 上の archive.json 取得に失敗しました。しばらくしてから再実行してください。";
+    if (isAuthLike) {
+      // 認証切れは運用上の想定内イベントとして warn で監査する。
+      logger.warn(
+        "OneDrive archive fetch auth-like failure.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.auth-failure",
+          route: "api/onedrive/archive",
+          error,
+          status: 401,
+          failureType: "onedrive-auth",
+        }),
+      );
+    } else {
+      // 非認証系は保存/参照障害として error で検知可能にする。
+      logger.error(
+        "OneDrive archive fetch failed.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.archive-fetch-failed",
+          route: "api/onedrive/archive",
+          error,
+          status: 502,
+          failureType: "onedrive-non-auth",
+        }),
+      );
+    }
 
     return Response.json(
       {

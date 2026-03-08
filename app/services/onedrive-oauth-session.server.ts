@@ -14,6 +14,7 @@ import { redisCompareAndDelete, redisDel, redisGet, redisSetEx, redisSetNxPx } f
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { resolvedSessionSecret } from "./session-secret.server";
 import { logger } from "./logger.server";
+import { sanitizeAuditPayload } from "./onedrive-audit-log.server";
 
 // 定数定義。呼び出し側はこれらの値を知らなくていいように、必要なロジックはこのファイル内に閉じ込める。
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
@@ -93,7 +94,11 @@ function resolveTokenEncryptionKeys(): { current: TokenEncryptionKey; previous: 
         );
       }
       logger.warn("OneDrive token encryption rotation proceeds without previous key; existing sessions may be invalidated.", {
-        currentKeyVersion: TOKEN_ENCRYPTION_CURRENT_KEY_VERSION,
+        ...sanitizeAuditPayload({
+          event: "onedrive.rotation-without-previous-key",
+          route: "onedrive-oauth-session",
+          currentKeyVersion: TOKEN_ENCRYPTION_CURRENT_KEY_VERSION,
+        }),
       });
     }
     return { current, previous: null };
@@ -244,6 +249,7 @@ type DecryptTokenCacheResult =
   | { cache: null; reason: string; cause?: string };
 
 function classifyDecryptFailureCause(error: unknown): string {
+  // OpenSSL 由来の例外文言ゆれを、運用で集計しやすい固定コードへ寄せる。
   if (!(error instanceof Error)) return "unexpected-error";
   const message = error.message.toLowerCase();
   if (message.includes("authenticate") || message.includes("auth tag")) {
@@ -261,6 +267,7 @@ function decryptTokenCacheWithKey(
   ciphertextSegment: string,
   key: Buffer,
 ): ParseTokenCacheResult {
+  // セグメント境界チェックを先に行い、復号処理へ不正データを渡さない。
   const iv = Buffer.from(ivSegment, "base64url");
   const authTag = Buffer.from(authTagSegment, "base64url");
   const encrypted = Buffer.from(ciphertextSegment, "base64url");
@@ -274,6 +281,7 @@ function decryptTokenCacheWithKey(
 }
 
 function resolveKeyByVersion(version: string): TokenEncryptionKey | null {
+  // 5-segment 形式は keyVersion 指定の鍵だけを使い、総当たり復号はしない。
   if (version === tokenEncryptionKeys.current.version) return tokenEncryptionKeys.current;
   if (tokenEncryptionKeys.previous && version === tokenEncryptionKeys.previous.version) return tokenEncryptionKeys.previous;
   return null;
@@ -283,6 +291,7 @@ function resolveKeyByVersion(version: string): TokenEncryptionKey | null {
 function decryptTokenCache(value: string): DecryptTokenCacheResult {
   const segments = value.split(".");
   if (segments.length === 5) {
+    // 新形式は keyVersion 固定で1鍵のみ試行し、復号不能は fail-closed。
     if (segments[0] !== TOKEN_ENCRYPTION_VERSION_PREFIX) return { cache: null, reason: "unknown-version" };
     const keyVersion = segments[1] ?? "";
     const keyEntry = resolveKeyByVersion(keyVersion);
@@ -296,6 +305,7 @@ function decryptTokenCache(value: string): DecryptTokenCacheResult {
   }
 
   if (segments.length === 4) {
+    // 旧形式のみ後方互換のために順序付きフォールバックを許可する。
     if (segments[0] !== TOKEN_ENCRYPTION_VERSION_PREFIX) return { cache: null, reason: "unknown-version" };
     const keysToTry = [
       tokenEncryptionKeys.current.key,
@@ -372,9 +382,13 @@ export async function getTokenForSession(sessionId: string | null): Promise<Toke
   const decrypted = decryptTokenCache(raw);
   if (!decrypted.cache) {
     logger.warn("Discarding invalid OneDrive OAuth session token.", {
-      sessionIdHash: toSessionIdLogHash(sessionId),
-      reason: decrypted.reason,
-      ...(decrypted.cause ? { cause: decrypted.cause } : {}),
+      ...sanitizeAuditPayload({
+        event: "onedrive.invalid-session-token-discarded",
+        route: "onedrive-oauth-session",
+        sessionIdHash: toSessionIdLogHash(sessionId),
+        reason: decrypted.reason,
+        ...(decrypted.cause ? { cause: decrypted.cause } : {}),
+      }),
     });
     await deleteCorruptedSessionKey(sessionId);
     return null;

@@ -102,6 +102,28 @@ describe("api.onedrive.session-status loader", () => {
     expect(body.isAuthError).toBe(true);
   });
 
+  it("認証エラー詳細はレスポンスへ露出しない", async () => {
+    vi.mocked(getAccessToken).mockRejectedValue(
+      new Error("OneDrive API error (401) [code=InvalidAuthenticationToken]: token=super-secret-token"),
+    );
+
+    const response = await loader({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+      errorCode?: string;
+      errorMessage?: string;
+    };
+
+    expect(response.status).toBe(401);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(true);
+    expect(body.errorCode).toBe("InvalidAuthenticationToken");
+    expect(body.errorMessage).toBeUndefined();
+    expect(body.error).toBe("OneDrive 認証が有効ではありません。Connect OneDrive から再認証してください。");
+  });
+
   it("token crypto 障害は認証エラー扱いせず502を返す", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(getAccessToken).mockRejectedValue(new Error("OneDrive token crypto encrypt failed: cipher failed"));
