@@ -9,6 +9,8 @@
  * - `waitForRefreshOutcome` が Redis read 障害を `OAuthSessionStoreUnavailableError` として返すか確認するとき。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
+import { resolvedSessionSecret } from "./session-secret.server";
 
 const { redisMockState } = vi.hoisted(() => ({
   redisMockState: {
@@ -31,6 +33,16 @@ const { redisMockState } = vi.hoisted(() => ({
 const { mockLoggerWarn } = vi.hoisted(() => ({
   mockLoggerWarn: vi.fn(),
 }));
+
+function encryptMalformedSessionPayload(payload: unknown): string {
+  const key = createHash("sha256").update(resolvedSessionSecret, "utf8").digest();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const plaintext = JSON.stringify(payload);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return ["v1", iv.toString("base64url"), authTag.toString("base64url"), encrypted.toString("base64url")].join(".");
+}
 
 vi.mock("./redis.server", () => ({
   redisCompareAndDelete: vi.fn(),
@@ -304,14 +316,46 @@ describe("onedrive-oauth-session", () => {
     expect(warnPayload).not.toHaveProperty("cause");
   });
 
-  it("session 値が型不整合なら null を返し、破損キーを削除する", async () => {
-    redisMockState.sessionRawValue = JSON.stringify({
+  it("accessToken 型不整合は無効セッション扱いで削除する", async () => {
+    redisMockState.sessionRawValue = encryptMalformedSessionPayload({
       accessToken: 123,
       refreshToken: "refresh-token-1",
       expiresAt: Date.now() + 60_000,
     });
-    await expect(getTokenForSession("session-invalid-shape")).resolves.toBeNull();
-    expect(redisMockState.deletedSessionKeys).toContain("onedrive:session:session-invalid-shape");
+    await expect(getTokenForSession("session-invalid-access-token-type")).resolves.toBeNull();
+    expect(redisMockState.deletedSessionKeys).toContain("onedrive:session:session-invalid-access-token-type");
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      "Discarding invalid OneDrive OAuth session token.",
+      expect.objectContaining({ reason: "invalid-access-token-type" }),
+    );
+  });
+
+  it("refreshToken 型不整合は無効セッション扱いで削除する", async () => {
+    redisMockState.sessionRawValue = encryptMalformedSessionPayload({
+      accessToken: "access-token",
+      refreshToken: 123,
+      expiresAt: Date.now() + 60_000,
+    });
+    await expect(getTokenForSession("session-invalid-refresh-token-type")).resolves.toBeNull();
+    expect(redisMockState.deletedSessionKeys).toContain("onedrive:session:session-invalid-refresh-token-type");
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      "Discarding invalid OneDrive OAuth session token.",
+      expect.objectContaining({ reason: "invalid-refresh-token-type" }),
+    );
+  });
+
+  it("expiresAt 型不整合は無効セッション扱いで削除する", async () => {
+    redisMockState.sessionRawValue = encryptMalformedSessionPayload({
+      accessToken: "access-token",
+      refreshToken: "refresh-token-1",
+      expiresAt: "invalid",
+    });
+    await expect(getTokenForSession("session-invalid-expires-at")).resolves.toBeNull();
+    expect(redisMockState.deletedSessionKeys).toContain("onedrive:session:session-invalid-expires-at");
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      "Discarding invalid OneDrive OAuth session token.",
+      expect.objectContaining({ reason: "invalid-expires-at" }),
+    );
   });
 
   it("破損セッション削除が失敗しても null を返す", async () => {
