@@ -13,8 +13,8 @@ const REDACTED = "[REDACTED]";
 
 const SENSITIVE_TEXT_PATTERNS = [
   /([?&](?:access_token|refresh_token|token|client_secret|code)=)[^&\s]+/gi,
-  /((?:access[_-]?token|refresh[_-]?token|token|secret|password|authorization|cookie))\s*[:=]\s*([^\s,;]+)/gi,
   /\bBearer\s+[A-Za-z0-9._~+\-/]+=*\b/gi,
+  /((?:access[_-]?token|refresh[_-]?token|token|secret|password|authorization|cookie)\s*[:=]\s*)([^\s,;]+)/gi,
   /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+\b/g,
 ];
 

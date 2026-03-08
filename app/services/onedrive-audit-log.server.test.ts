@@ -38,4 +38,16 @@ describe("onedrive-audit-log", () => {
     expect(payload.refreshToken).toBe("[REDACTED]");
     expect(payload.nested).toEqual({ authorization: "[REDACTED]" });
   });
+
+  it("authorization: Bearer 形式の値を完全マスクする", () => {
+    const payload = buildOneDriveAuditErrorPayload({
+      event: "onedrive.test",
+      route: "api/onedrive/test",
+      failureType: "test",
+      error: new Error("authorization: Bearer abc.def=="),
+    });
+
+    expect(payload.message).toBe("authorization: [REDACTED]");
+    expect(payload.message).not.toContain("abc.def==");
+  });
 });
