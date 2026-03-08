@@ -269,7 +269,7 @@ describe("onedrive-oauth-session", () => {
     expect(redisMockState.deletedSessionKeys).toContain("onedrive:session:session-legacy-plaintext");
   });
 
-  it("復号失敗時は生sessionIdを含めず固定 reason code を警告ログへ残す", async () => {
+  it("復号失敗時は生sessionIdを含めず reason/cause を警告ログへ残す", async () => {
     redisMockState.sessionRawValue = [
       "v1",
       Buffer.alloc(12).toString("base64url"),
@@ -283,11 +283,25 @@ describe("onedrive-oauth-session", () => {
       expect.objectContaining({
         sessionIdHash: expect.stringMatching(/^[0-9a-f]{12}$/),
         reason: "decrypt-failed",
+        cause: "auth-failed",
       }),
     );
     const warnPayload = mockLoggerWarn.mock.calls[0]?.[1];
     expect(warnPayload).not.toHaveProperty("sessionId");
     expect(JSON.stringify(warnPayload)).not.toContain(sessionId);
+  });
+
+  it("復号前バリデーション失敗では cause を付けない", async () => {
+    redisMockState.sessionRawValue = "legacy-plaintext";
+    await expect(getTokenForSession("session-invalid-format")).resolves.toBeNull();
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      "Discarding invalid OneDrive OAuth session token.",
+      expect.objectContaining({
+        reason: "invalid-segment-count",
+      }),
+    );
+    const warnPayload = mockLoggerWarn.mock.calls[0]?.[1];
+    expect(warnPayload).not.toHaveProperty("cause");
   });
 
   it("session 値が型不整合なら null を返し、破損キーを削除する", async () => {

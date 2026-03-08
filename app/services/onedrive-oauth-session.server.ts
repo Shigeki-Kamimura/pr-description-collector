@@ -160,7 +160,19 @@ function parseTokenCache(value: string): ParseTokenCacheResult {
 // decryptTokenCache と parseTokenCache を分けることで、暗号化の失敗と形式の不正を区別してログに出せるようにする。
 type DecryptTokenCacheResult =
   | { cache: TokenCache; reason: null }
-  | { cache: null; reason: string };
+  | { cache: null; reason: string; cause?: string };
+
+function classifyDecryptFailureCause(error: unknown): string {
+  if (!(error instanceof Error)) return "unexpected-error";
+  const message = error.message.toLowerCase();
+  if (message.includes("authenticate") || message.includes("auth tag")) {
+    return "auth-failed";
+  }
+  if (message.includes("invalid") || message.includes("length") || message.includes("format")) {
+    return "invalid-ciphertext";
+  }
+  return "unexpected-error";
+}
 
 // 暗号化形式以外は旧形式として即無効化する（fail-closed）。
 function decryptTokenCache(value: string): DecryptTokenCacheResult {
@@ -180,8 +192,8 @@ function decryptTokenCache(value: string): DecryptTokenCacheResult {
     decipher.setAuthTag(authTag);
     const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
     return parseTokenCache(decrypted);
-  } catch {
-    return { cache: null, reason: "decrypt-failed" };
+  } catch (error) {
+    return { cache: null, reason: "decrypt-failed", cause: classifyDecryptFailureCause(error) };
   }
 }
 // 以下、Redis ストアを経由した OneDrive OAuth token 永続化の実装。呼び出し側はこれらの関数を通じて sessionId と token cache をやりとりする。
@@ -243,6 +255,7 @@ export async function getTokenForSession(sessionId: string | null): Promise<Toke
     logger.warn("Discarding invalid OneDrive OAuth session token.", {
       sessionIdHash: toSessionIdLogHash(sessionId),
       reason: decrypted.reason,
+      ...(decrypted.cause ? { cause: decrypted.cause } : {}),
     });
     await deleteCorruptedSessionKey(sessionId);
     return null;
