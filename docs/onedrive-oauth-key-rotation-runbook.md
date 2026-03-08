@@ -41,3 +41,5 @@
 1. `ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION=true` を明示設定する。
 2. 失効の目的と実施時刻を運用記録に残す。
 3. 実施後、再認証案内をユーザーへ告知する。
+4. デプロイ完了後、`ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION` を
+   unset または `false` に戻す（次回ローテーション時の誤バイパス防止）。
