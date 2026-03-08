@@ -70,8 +70,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const rawMessage = error instanceof Error ? error.message : "Unknown error";
     const parsed = extractOneDriveError(rawMessage);
     const isAuthLike = isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage);
+    const authStatus = parsed.code === "accessDenied" ? 403 : 401;
     const message = isAuthLike
-      ? "OneDrive 認証が有効ではありません。Connect OneDrive から再認証してください。"
+      ? authStatus === 403
+        ? "OneDrive へのアクセスが拒否されました。権限を確認してください。"
+        : "OneDrive 認証が有効ではありません。Connect OneDrive から再認証してください。"
       : "OneDrive セッション確認に失敗しました。しばらくしてから再実行してください。";
     if (isAuthLike) {
       logger.warn(
@@ -80,7 +83,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
           event: "onedrive.auth-failure",
           route: "api/onedrive/session-status",
           error,
-          status: 401,
+          status: authStatus,
           failureType: "onedrive-auth",
           extra: {
             code: parsed.code ?? null,
@@ -109,12 +112,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
       {
         ok: false,
         error: message,
-        isAuthError: isAuthLike,
+        isAuthError: isAuthLike && authStatus === 401,
         errorCode: isAuthLike ? parsed.code : undefined,
         // 詳細文は機微情報混入リスクがあるためレスポンスには載せない。
         errorMessage: undefined,
       } satisfies ApiOneDriveSessionStatusResponse,
-      { status: isAuthLike ? 401 : 502 },
+      { status: isAuthLike ? authStatus : 502 },
     );
   }
 }

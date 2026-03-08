@@ -125,9 +125,35 @@ export async function loader({ request }: LoaderFunctionArgs) {
         return textResponse(404, "evidence image not found");
       }
       if (error.status === 403) {
+        logger.warn(
+          "OneDrive evidence-image auth-like failure.",
+          buildOneDriveAuditErrorPayload({
+            event: "onedrive.auth-failure",
+            route: "api/onedrive/evidence-image",
+            error,
+            status: 403,
+            failureType: "onedrive-auth",
+            extra: {
+              code: error.code ?? null,
+            },
+          }),
+        );
         return textResponse(403, "onedrive access denied");
       }
       if (error.status === 401) {
+        logger.warn(
+          "OneDrive evidence-image auth-like failure.",
+          buildOneDriveAuditErrorPayload({
+            event: "onedrive.auth-failure",
+            route: "api/onedrive/evidence-image",
+            error,
+            status: 401,
+            failureType: "onedrive-auth",
+            extra: {
+              code: error.code ?? null,
+            },
+          }),
+        );
         return textResponse(401, "onedrive auth required");
       }
       if (error.status === 429) {

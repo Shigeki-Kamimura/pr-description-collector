@@ -102,6 +102,28 @@ describe("api.onedrive.session-status loader", () => {
     expect(body.isAuthError).toBe(true);
   });
 
+  it("accessDenied は 403 / isAuthError=false を返す", async () => {
+    vi.mocked(getAccessToken).mockRejectedValue(
+      new Error("OneDrive API error (403) [code=accessDenied]: insufficient privileges"),
+    );
+
+    const response = await loader({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+      errorCode?: string;
+      errorMessage?: string;
+    };
+
+    expect(response.status).toBe(403);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.errorCode).toBe("accessDenied");
+    expect(body.errorMessage).toBeUndefined();
+    expect(body.error).toBe("OneDrive へのアクセスが拒否されました。権限を確認してください。");
+  });
+
   it("認証エラー詳細はレスポンスへ露出しない", async () => {
     vi.mocked(getAccessToken).mockRejectedValue(
       new Error("OneDrive API error (401) [code=InvalidAuthenticationToken]: token=super-secret-token"),

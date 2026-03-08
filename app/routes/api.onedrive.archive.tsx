@@ -12,7 +12,7 @@ import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/git
 import { logger } from "../services/logger.server";
 import { buildOneDriveAuditErrorPayload } from "../services/onedrive-audit-log.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
-import { isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
 import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { validatePrRefInput } from "../services/validation";
 import { verifyCsrfToken } from "../services/csrf.server";
@@ -445,8 +445,12 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
     const isAuthLike = isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage);
+    const parsed = extractOneDriveError(rawMessage);
+    const authStatus = parsed.code === "accessDenied" ? 403 : 401;
     const message = isAuthLike
-      ? "OneDrive 認証が切れています。再認証してから再実行してください。"
+      ? authStatus === 403
+        ? "OneDrive へのアクセスが拒否されました。権限を確認してください。"
+        : "OneDrive 認証が切れています。再認証してから再実行してください。"
       : "OneDrive 上の archive.json 取得に失敗しました。しばらくしてから再実行してください。";
     if (isAuthLike) {
       // 認証切れは運用上の想定内イベントとして warn で監査する。
@@ -456,8 +460,12 @@ export async function action({ request }: ActionFunctionArgs) {
           event: "onedrive.auth-failure",
           route: "api/onedrive/archive",
           error,
-          status: 401,
+          status: authStatus,
           failureType: "onedrive-auth",
+          extra: {
+            code: parsed.code ?? null,
+            detail: parsed.message ?? null,
+          },
         }),
       );
     } else {
@@ -478,11 +486,11 @@ export async function action({ request }: ActionFunctionArgs) {
       {
         ok: false,
         error: message,
-        isAuthError: isAuthLike,
+        isAuthError: isAuthLike && authStatus === 401,
         errorCode: undefined,
         errorMessage: undefined,
       } satisfies ApiOneDriveArchiveResponse,
-      { status: isAuthLike ? 401 : 502 },
+      { status: isAuthLike ? authStatus : 502 },
     );
   }
 }
