@@ -122,7 +122,7 @@ describe("onedrive-auth refresh single-flight", () => {
     expect(token2).toBe("new-access-token");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mockTryAcquireRefreshLock).toHaveBeenCalledWith(sessionId, 185000);
-    expect(mockWaitForRefreshOutcome).toHaveBeenCalledWith(sessionId, 60000);
+    expect(mockWaitForRefreshOutcome).toHaveBeenCalledWith(sessionId, 187000);
 
     const token3 = await getAccessToken(request);
     expect(token3).toBe("new-access-token");

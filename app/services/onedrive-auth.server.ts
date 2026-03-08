@@ -28,6 +28,7 @@ const SCOPES = ["offline_access", "Files.ReadWrite", "User.Read"];
 const DEFAULT_OAUTH_REQUEST_TIMEOUT_SECONDS = 180;
 const DEFAULT_REFRESH_WAIT_TIMEOUT_SECONDS = 60;
 const REFRESH_LOCK_TTL_BUFFER_MS = 5000;
+const REFRESH_WAIT_GRACE_MS = 2000;
 
 function parseTimeoutSecondsToMs(value: string | undefined, fallbackMs: number): number {
   const parsedSeconds = Number.parseInt(value ?? "", 10);
@@ -40,10 +41,12 @@ const OAUTH_REQUEST_TIMEOUT_MS = parseTimeoutSecondsToMs(
   DEFAULT_OAUTH_REQUEST_TIMEOUT_SECONDS * 1000,
 );
 const REFRESH_LOCK_TTL_MS = OAUTH_REQUEST_TIMEOUT_MS + REFRESH_LOCK_TTL_BUFFER_MS;
-const REFRESH_WAIT_MS = parseTimeoutSecondsToMs(
+const configuredRefreshWaitMs = parseTimeoutSecondsToMs(
   process.env.ONEDRIVE_REFRESH_WAIT_TIMEOUT_SECONDS,
   DEFAULT_REFRESH_WAIT_TIMEOUT_SECONDS * 1000,
 );
+// lock TTL 直後の観測揺れで failure を取りこぼさないよう、follower 待機は lock TTL よりわずかに長く確保する。
+const REFRESH_WAIT_MS = Math.max(configuredRefreshWaitMs, REFRESH_LOCK_TTL_MS + REFRESH_WAIT_GRACE_MS);
 const REFRESH_FAILURE_TTL_SECONDS = Math.ceil(REFRESH_WAIT_MS / 1000);
 
 // Microsoft Entra ID の token endpoint が返すレスポンスのうち、本実装で使う項目だけを表す。
