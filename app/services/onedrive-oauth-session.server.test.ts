@@ -8,11 +8,17 @@
  * - `ensureOAuthSessionStoreAvailable` が write/read/delete probe を行うか確認するとき。
  * - `waitForRefreshOutcome` が Redis read 障害を `OAuthSessionStoreUnavailableError` として返すか確認するとき。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { resolvedSessionSecret } from "./session-secret.server";
 
-const { testCryptoConfig } = vi.hoisted(() => {
+const { testCryptoConfig, originalEnv } = vi.hoisted(() => {
+  const originalEnv = {
+    currentKeyVersion: process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION,
+    currentKeyMaterial: process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL,
+    previousKeyVersion: process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION,
+    previousKeyMaterial: process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL,
+  };
   const testCryptoConfig = {
     currentKeyVersion: "k-current",
     currentKeyMaterial: "test-current-material",
@@ -23,7 +29,7 @@ const { testCryptoConfig } = vi.hoisted(() => {
   process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = testCryptoConfig.currentKeyMaterial;
   process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION = testCryptoConfig.previousKeyVersion;
   process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL = testCryptoConfig.previousKeyMaterial;
-  return { testCryptoConfig };
+  return { testCryptoConfig, originalEnv };
 });
 
 const { redisMockState } = vi.hoisted(() => ({
@@ -167,6 +173,29 @@ import {
 } from "./onedrive-oauth-session.server";
 
 describe("onedrive-oauth-session", () => {
+  afterAll(() => {
+    if (originalEnv.currentKeyVersion === undefined) {
+      delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION;
+    } else {
+      process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_VERSION = originalEnv.currentKeyVersion;
+    }
+    if (originalEnv.currentKeyMaterial === undefined) {
+      delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL;
+    } else {
+      process.env.ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL = originalEnv.currentKeyMaterial;
+    }
+    if (originalEnv.previousKeyVersion === undefined) {
+      delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION;
+    } else {
+      process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_VERSION = originalEnv.previousKeyVersion;
+    }
+    if (originalEnv.previousKeyMaterial === undefined) {
+      delete process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL;
+    } else {
+      process.env.ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL = originalEnv.previousKeyMaterial;
+    }
+  });
+
   beforeEach(() => {
     redisMockState.deletedProbeKeys.length = 0;
     redisMockState.probeReadValueOverride = null;

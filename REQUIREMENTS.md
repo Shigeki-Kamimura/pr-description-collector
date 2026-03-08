@@ -135,11 +135,11 @@
    - OneDrive OAuth を利用するすべての外部公開経路は HTTPS を必須とし、HTTP では認証フローを開始・完了させない。
    - `SESSION_SECRET` は production で必須とし、Cookie 署名の信頼境界を維持する。
    - Redis に保存する OneDrive OAuth の `accessToken` / `refreshToken` を平文で保存してはならない。保存時はサーバー側で暗号化し、読み取り時に復号して利用する。
-   - Redis 上の token 保存形式はバージョン識別子を先頭に含むこと（例: `v1.<iv>.<authTag>.<ciphertext>`）。未対応バージョンや不正形式は fail-closed で無効セッションとして扱う。
-   - token 暗号化鍵は `SESSION_SECRET` から導出し、プロセス再起動後も同一 `SESSION_SECRET` で復号可能であること。
+   - Redis 上の token 保存形式はバージョン識別子を先頭に含むこと（例: `v1.<keyVersion>.<iv>.<authTag>.<ciphertext>`）。未対応バージョンや不正形式は fail-closed で無効セッションとして扱う。
+   - token 暗号化鍵は鍵素材設定（`ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL` / `ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL`）から導出すること。これらが未設定の場合は `SESSION_SECRET` をデフォルト鍵素材として利用すること。
    - 鍵ローテーションは `current + previous(1世代)` を上限とする。`previous` は未設定可だが、複数世代（2世代以上）の同時サポートは要件外とする。
    - 新規保存時の暗号化は常に `current` 鍵を使用し、`previous` 鍵で新規暗号化してはならない。
-   - 復号時は `current` を優先し、失敗時のみ `previous` を試行する。両方で復号不能な場合は fail-closed で無効セッション扱いとする。
+   - 復号時の鍵選択は token 形式に応じて行うこと。5-segment 形式（例: `v1.<keyVersion>.<iv>.<authTag>.<ciphertext>`）では `keyVersion` に基づき `current` または `previous` のいずれか 1 つの鍵のみで復号を試行し、復号失敗または unknown key version の場合は fail-closed で無効セッション扱いとする。4-segment など旧形式 token は `current` → `previous` → legacy(sha256) の順で復号を試行し、いずれも復号不能な場合は fail-closed で無効セッション扱いとする。
    - `previous` 鍵の供給方式は、アプリ設定（環境変数または同等の設定チャネル）で明示的に指定する。未指定時は `current` のみで運用する。
    - デプロイ互換性要件: token 保存形式変更（例: `v1.<keyVersion>.<iv>.<authTag>.<ciphertext>`）を含むリリースでは、新旧アプリ混在時の互換性影響を事前に評価すること。旧バージョンが新形式を復号できない場合、ローリングデプロイ中に一部ユーザーへ再認証要求が発生し得る。
    - ロールバック要件: 新形式トークンを書き込んだ後に旧バージョンへロールバックする場合、旧バージョンで復号不能なセッションが再認証対象になることを運用手順に明記し、ロールバック判断時の前提情報とすること。
