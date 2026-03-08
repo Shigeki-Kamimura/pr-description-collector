@@ -1,97 +1,106 @@
-# Copilot & Codex エージェント チェックリスト
+# Copilot Review Checklist
 
-## 🎯 PR種別ごとの必須最小セット
-- [ ] バグ修正PR: `🔒 セキュリティ` / `📐 設計・コード` / `🧪 テスト(回帰)` を最低限確認
-- [ ] 機能追加PR: 上記 + `📚 ドキュメント` を最低限確認
-- [ ] リファクタPR: 挙動同等性（回帰なし）とテスト同等性を最低限確認
-- [ ] インフラ/設定PR: `🔒 セキュリティ` / `🚀 デプロイメント` を最低限確認
+## 0. MODE
+- [ ] FULL_SWEEP_L2PLUS
+- [ ] DIFF_ONLY_L2PLUS
+- [ ] L0_AUDIT
+- [ ] BROWSER_FINAL
 
-## 🧭 N/A 記載ルール
-- [ ] 非該当項目は `N/A: 理由` を1行で記載し、空欄のままにしない
+Rule:
+- FULL_SWEEP_L2PLUS: PR全体の L2+ Medium/High を洗う
+- DIFF_ONLY_L2PLUS: 前回以降の差分だけを見る
+- L0_AUDIT: 通常レビューはしない。L0の抜けだけ見る
+- BROWSER_FINAL: PR時点でまだ拾う価値がある Medium/High だけ確認
 
-## 📐 設計・コード
-- [ ] 関数・クラスの粒度は妥当か（LOC, API公開数, 複雑度を計測）
-- [ ] 冗長な依存やデバッグ出力が追加されていないか
-- [ ] 命名・コメントは一貫しているか（用語集/スタイルガイドに準拠）
-- [ ] O(N)以上の計算やN+1クエリが潜んでいないか
-- [ ] コードの重複は最小限に抑えられているか
-- [ ] エラーハンドリングは適切に実装されているか
+## 1. PR Type
+- [ ] バグ修正
+- [ ] 機能追加
+- [ ] リファクタ
+- [ ] 認証 / 認可
+- [ ] スキーマ / SQL
+- [ ] インフラ / 設定
+- [ ] デプロイ / 運用
 
-## 🧪 テスト
-- [ ] 単体テストはカバレッジ目標（>80%）を満たしているか
-- [ ] 境界値・エッジケースのテストが含まれているか
-- [ ] 統合テスト・E2Eテストが必要に応じて追加されているか
-- [ ] テストの実行時間は許容範囲内か
+## 2. N/A / Unknown
+- [ ] 非該当は `N/A: 理由`
+- [ ] 不明は `Unknown: 要確認`
+- [ ] 推測で埋めない
 
-## 🔒 セキュリティ
-- [ ] STRIDEの観点で脅威がないか
-- [ ] Trust boundary is explicitly identified
-- [ ] シークレットやキーがハードコードされていないか
-- [ ] 入力検証、リトライ/タイムアウト、サーキットブレーカがあるか
-- [ ] 認証・認可のチェックは適切か
-- [ ] セキュリティスキャンツールの警告に対応しているか
+## 3. Scope Guard
+- [ ] Objective が明確
+- [ ] Non-goals が明確
+- [ ] goal / non-goal が曖昧で correctness に効くなら 1問だけ確認して停止
+- [ ] DIFF_ONLY では未変更箇所を新規に掘り返していない
 
-## ⚡ パフォーマンス / 可観測性
-- [ ] p95レイテンシ、CPU/mem、DBコストの劣化がないか
-- [ ] ログ/メトリクス/トレースが十分に埋め込まれているか
-- [ ] リソース消費の改善がある場合、根拠データが示されているか
-- [ ] パフォーマンステストの結果が添付されているか
-- [ ] アラート条件が定義・更新されているか
+## 4. Core Risk Gate
+- [ ] 本番障害の具体的シナリオを説明できる
+- [ ] ユーザー / データ / 運用への影響を説明できる
+- [ ] コード上の根拠がある
+- [ ] root cause 単位に統合されている
+- [ ] Low / cosmetic を混ぜていない
 
-## 💾 SQL
-- [ ] ダイアレクト/バージョンを明記しているか
-- [ ] EXPLAINを取得し、主要演算の変化を提示しているか
-- [ ] インデックス作成時にサイズ/書き込みコスト/ロールバック計画があるか
-- [ ] サーガブル条件やKeyset Paginationを使っているか
-- [ ] クエリ件数/N+1リスクが説明されているか
-- [ ] トランザクション分離レベルは適切か
+## 5. L2+ Focus
+### Contract / State
+- [ ] public contract の破壊がない
+- [ ] state transition が壊れていない
+- [ ] error path が危険でない
 
-## 🚀 デプロイメント
-- [ ] フィーチャーフラグが適切に使われているか
-- [ ] ロールアウト/ロールバック手順があるか
-- [ ] CI/CD構成の改変は提案レベルに留まり、直接編集していないか
-- [ ] 障害シナリオやリカバリ計画が考慮されているか
-- [ ] デプロイ順序の依存関係が明確か
+### Security / Boundary
+- [ ] 認証 / 認可の欠落や迂回がない
+- [ ] trust boundary をまたぐ前提が危険でない
+- [ ] 入力検証 / secrets / PII の扱いに実害がない
 
-## 📚 ドキュメント
-- [ ] API仕様書（OpenAPI/Swagger）が更新されているか
-- [ ] READMEやWikiが更新されているか
-- [ ] 設計判断の根拠が記録されているか
-- [ ] リリースノートの内容が準備されているか
+### Data Integrity
+- [ ] duplicate write / lost update / partial write がない
+- [ ] transaction boundary が不足していない
+- [ ] idempotency が崩れていない
 
-## 🤖 エージェント運用（Codex）チェック
-- [ ] **Runbookコマンド**がPR/Issueに明示（`setup/build/verify/test/bench`）
-- [ ] **依存関係のバージョン固定**（lockfile/requirements）が更新・レビューされている
-- [ ] **Autonomy Budget**（最大ステップ数/実行時間）と**停止条件**（失敗回数・最大Diff）が定義されている
-- [ ] **PR分割基準**（≤400行/PR or ディレクトリ単位）が守られ、依存範囲を超える修正は新タスクに切り出されている
-- [ ] **Dry-run / 提案モード**で危険領域（CI/Secrets/スキーマ）変更は先に計画提示されている
-- [ ] **ログ/ベンチ結果**がPRに保存され、**エージェント実行ログ/出力**も追跡可能になっている
-- [ ] **MCP/規約リンク**で一次情報に依拠し、独自仕様を創作していない
-- [ ] **Acceptanceの定量基準**（p95/CPU/mem/DBコスト/EXPLAIN差分）が**SLO閾値付きで**満たされている
-- [ ] **データ境界/ライセンス/セキュリティ**違反がない（生成物の出典やライセンス表記を含む）
-- [ ] **判断ログ**がPRコメントに残され、主要な決定事項が追跡可能になっている
-- [ ] **ヒューマンレビュー**が必要な箇所に明示的にコメントが付けられている
+### Reliability / Concurrency
+- [ ] retry / timeout / cancellation で correctness が壊れない
+- [ ] race / deadlock / resource leak の実害がない
+- [ ] 外部依存失敗時の振る舞いが危険でない
 
+### Persistence / SQL
+- [ ] 永続化仕様が contract と矛盾しない
+- [ ] schema / query 変更が correctness や整合性を壊さない
+- [ ] migration / rollback の破綻がない
 
-## 📋 プロジェクト固有チェック
-<!-- プロジェクト特有の追加チェック項目をここに追加 -->
-- [ ] 
-- [ ] 
-- [ ] 
+### Rollout / Deployment
+- [ ] rollout / rollback 手順が必要な変更か判断した
+- [ ] 不可逆変更の停止条件がある
+- [ ] feature flag / migration 順序 / recovery を確認した
 
-## チェックリスト使用ガイド
+## 6. Minimal Test / Check
+- [ ] failure path を閉じる最小 test/check がある
+- [ ] coverage 目標ではなく、今回の高リスク契約を固定するチェックになっている
+- [ ] L0で拾えるならL0へ、拾えないなら最小追加テストを提案
 
-### 優先度ラベル
-- 🔴 **必須**: すべてのPR/Issueで必ずチェック
-- 🟠 **推奨**: 機能追加や大規模変更時にチェック
-- 🟢 **任意**: 必要に応じてチェック
+## 7. Mode-only
+### L0_AUDIT
+- [ ] lint / type / test / build / security のどこが抜けているか明確
+- [ ] “missing gate / weak gate / missing regression test” で整理した
+- [ ] 追加提案は 1〜3件に絞った
 
-### 運用ルール（短縮版）
-- すべてを毎回埋めるのではなく、「PR種別ごとの必須最小セット」を先に満たす
-- 非該当は `N/A` 明記、判断根拠はPRコメントに1-2行で残す
+### DIFF_ONLY_L2PLUS
+- [ ] 既報の指摘を繰り返していない
+- [ ] 今回の差分が悪化させた問題だけを見ている
+- [ ] 新規 Medium/High がなければ明確に「なし」と言う
 
-### リンク集
-- [スタイルガイド](link-to-style-guide)
-- [セキュリティポリシー](link-to-security-policy)
-- [パフォーマンス基準](link-to-performance-standards)
-- [Codexエージェント運用ガイドライン](link-to-codex-guidelines)
+### BROWSER_FINAL
+- [ ] root cause ごとに統合した
+- [ ] 5件以内
+- [ ] PR時点で拾う価値がある残件だけ
+- [ ] 広い再探索ではなく取りこぼし確認になっている
+
+## 8. Output Shape
+各 finding は次だけを含む:
+- [ ] Location
+- [ ] Failure scenario
+- [ ] Impact
+- [ ] Minimal fix
+- [ ] Minimal test/check（必要時のみ）
+
+## 9. Final Decision
+- [ ] Medium/High の本番リスクあり
+- [ ] Medium/High の本番リスクなし
+- [ ] Goal / Non-goal が曖昧で停止

@@ -3,116 +3,94 @@
 - Output in Japanese.
 - Be concise.
 
-## Review Goal
+## Goal
 Reduce production risk with minimal discussion.
-Prefer one-pass, high-signal review over multi-round discovery.
-Make a best effort to surface all remaining Medium/High issues in the current pass.
-Do not intentionally hold back findings for later rounds.
+Prefer one-pass, high-signal review.
+Surface remaining unique Medium/High issues in the current pass.
+
+## Checklist
+Use `/.github/copilot-checklist.md` as a filter.
+Use only sections relevant to the current MODE and PR type.
+Use the checklist to narrow and consolidate findings, not expand scope.
 
 ## Modes
-Select mode from the first line of the prompt / chat / PR description when available.
+Read MODE from the first line of the prompt / chat / PR description when present.
 
-- MODE=FULL_SWEEP
-  - Review the entire PR.
-  - Report all unique Medium/High production risks across the PR.
-  - Do not limit by count.
-  - Group similar issues into one finding.
-  - Prefer breadth first, then depth.
+- MODE=FULL_SWEEP_L2PLUS
+  - Assume L0/L1 is already covered by CI, agent review, or local verification.
+  - Review the whole PR for remaining L2+ Medium/High risks.
+  - Focus on scope/non-goal violations, contract drift, state transitions, data integrity, concurrency/reliability, auth/security boundaries, SQL/persistence correctness, rollout/rollback risk.
+  - Do not spend findings on basic lint/type/unit-test failures unless they imply a broader production risk.
+  - Report all unique findings and group similar issues.
 
-- MODE=DIFF_ONLY
+- MODE=DIFF_ONLY_L2PLUS
+  - Assume L0/L1 is already covered.
   - Review only changes since the last review.
-  - Do not comment on unchanged files or unchanged lines.
+  - Do not comment on unchanged files or lines.
   - Ignore previously reported issues unless the new diff makes them worse.
-  - Report only new remaining Medium/High risks caused by the current diff.
+  - Report only new remaining L2+ Medium/High risks caused by the current diff.
 
 - MODE=L0_AUDIT
-  - Do not do a normal code review.
-  - Look only for missing or insufficient L0 checks (lint/type/test/build/security checks) that could allow a real production failure to slip through.
-  - Report at most 3 findings.
+  - Do not perform a normal PR review.
+  - Look only for missing or insufficient L0 checks that could allow a real production failure to slip through.
   - Prefer missing gate > weak gate > missing minimal regression test.
+  - Report at most 3 findings.
 
 - MODE=BROWSER_FINAL
-  - Final PR review for browser-based Copilot usage.
-  - Review the whole PR, but prioritize unresolved items that should block merge.
-  - Report at most 5 findings.
-  - Consolidate aggressively. One finding per root cause.
+  - Final PR-time review for browser Copilot.
+  - Assume earlier Chat/agent passes already happened.
+  - Surface remaining unresolved Medium/High production risks worth raising in PR review.
+  - Prefer likely missed issues over broad re-sweeps.
+  - Do not search untouched code unless the new diff makes it relevant.
+  - Report at most 5 consolidated findings.
 
 If MODE is absent, use MODE=BROWSER_FINAL.
 
-## Severity Scope
-Focus ONLY on production risks with Medium or High severity.
-Ignore Low severity and cosmetic issues.
-
+## Severity
+Focus ONLY on Medium/High production risks grounded in this PR.
 A finding is valid only if:
-- a realistic production failure scenario exists, and
-- the blast radius or user impact is non-trivial, and
-- the claim is grounded in code-level evidence from this PR.
+- a realistic production failure path exists
+- user, data, or operational impact is non-trivial
+- the claim is supported by code-level evidence in this PR
 
-Do not report speculative concerns without a concrete failure path.
+Do not report speculation without a concrete failure path.
 
-## Allowed Findings
-Only report issues that can realistically lead to production failure.
-
-### Security / Boundary
-- Authentication / Authorization flaws
-- Input validation or sanitization gaps
-- Exposure of secrets / PII in logs or errors
-
-### Correctness
-- Logic bugs
+## Allowed
+- Security / auth / trust-boundary flaws
+- Correctness bugs
+- Contract drift
 - Broken invariants
-- Wrong edge-case handling
-- Null / empty / boundary failures
-- Error-path bugs
-- State transition bugs
-
-### Data Integrity
-- Lost updates
-- Duplicate writes
-- Partial writes
-- Missing transaction boundaries
-- Idempotency violations
-- Incorrect persistence behavior
-
-### Concurrency / Reliability
-- Races
-- Deadlocks
-- Retry hazards
+- Error-path or state-transition bugs
+- Data integrity risks
+- Concurrency / retry / timeout / cancellation risks that break correctness
 - Resource leaks
-- Timeouts / cancellation bugs that can break correctness
-
-### Duplication / Comments
-Report duplicated functions ONLY when duplication can cause behavior drift, inconsistent fixes, or production divergence.
-Report missing or misleading comments ONLY when they can cause misuse of a public API or misunderstanding of complex production logic.
+- Rollout / rollback / migration hazards
+- Duplicated logic only when it can cause behavior drift
+- Misleading comments only when they can cause misuse of a public API or critical production logic
 
 ## Disallowed
-Do NOT report:
 - Style suggestions
 - Naming
-- Refactoring for cleanliness only
+- Cleanliness-only refactors
 - Architecture changes without a concrete production failure
 - “More modern” patterns
 - General maintainability opinions without user impact
-- Purely hypothetical risks without evidence
+- Coverage goals or doc updates unless directly required to prevent a production failure
 
-## Scope / Goal Guard
+## Scope Guard
 If correctness depends on an ambiguous goal, scope, or non-goal:
-- ask exactly ONE clarifying question, and
-- stop there.
+- ask exactly ONE clarifying question
+- stop there
 
 Do not silently expand scope.
-Do not reinterpret the PR’s goal unless the diff itself proves it.
 
-## CI Policy
-Treat executed CI results (lint / type / test / build) as the source of truth.
-Do not contradict executed results unless a real production failure is still realistically possible.
+## CI
+Treat executed CI results as the source of truth.
+Do not contradict executed lint/type/test/build results unless a real production failure is still realistically possible.
+You may propose a missing check or one minimal regression test when needed to lock a high-risk failure path.
 
-However:
-- you MAY propose missing or insufficient checks if a real production failure could slip through current CI
-- you MAY request one minimal regression test when needed to lock a high-risk contract or failure path
-
-## Output Rules
-Sort findings by:
+## Output
+Sort by:
 1. severity
 2. blast radius
 3. confidence
@@ -127,35 +105,8 @@ For each finding, provide exactly:
 - Impact
 - Minimal fix
 
-Add this only when truly needed:
+Add only when truly needed:
 - Minimal test/check
 
 If no valid findings exist, say:
 - Medium/High の本番リスクは見当たりませんでした
-
-## Mode-Specific Output Rules
-
-### FULL_SWEEP
-- Cover the full PR in one pass.
-- Report all unique Medium/High findings.
-- Group by category when helpful.
-- Do not artificially stop at 5.
-- Avoid follow-up bait such as “there may be more”.
-
-### DIFF_ONLY
-- Review only the new diff since the previous review.
-- Do not raise fresh concerns on untouched code.
-- Do not repeat earlier findings.
-- If nothing new remains, say so clearly.
-
-### L0_AUDIT
-For each finding, provide:
-- Missing / weak check
-- Failure that can slip through
-- Minimal added gate or test
-
-### BROWSER_FINAL
-- Optimize for merge decision.
-- Report only issues that should realistically block approval or require immediate follow-up.
-- Keep comments consolidated and non-overlapping.
-- Assume this should be the final pass whenever possible.
