@@ -134,9 +134,18 @@ export async function loader({ request }: { request: Request }) {
   try {
     await persistTokenForSession(sessionId, tokenCache);
   } catch (error) {
-    if (isOAuthSessionStoreUnavailableError(error) || isOAuthSessionTokenCryptoError(error)) {
+    // トークン保存失敗の原因がセッションストア障害なのかを判別し、適切なレスポンスを返す。
+    if (isOAuthSessionStoreUnavailableError(error)) {
       logger.error("OneDrive OAuth session store failed.", {
         message: error.message,
+        errorType: "store-unavailable",
+      });
+      return buildOAuthInfrastructureErrorResponse(OAUTH_PERSIST_FAILED_AFTER_EXCHANGE_MESSAGE);
+    }
+    if (isOAuthSessionTokenCryptoError(error)) {
+      logger.error("OneDrive OAuth token crypto failed.", {
+        message: error.message,
+        errorType: "token-crypto",
       });
       return buildOAuthInfrastructureErrorResponse(OAUTH_PERSIST_FAILED_AFTER_EXCHANGE_MESSAGE);
     }
