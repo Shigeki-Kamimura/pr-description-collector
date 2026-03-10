@@ -154,16 +154,17 @@ Notes:
 `compose.yaml` で app / redis / nginx(https) を一括起動できます。
 
 ```bash
-docker compose up -d --build
+SESSION_SECRET='change-me-long-random-secret' docker compose up -d --build
 ```
 
 `5173` が使用中の場合は公開ポートを変更できます。
 
 ```bash
-COMPOSE_PUBLIC_PORT=15173 docker compose up -d --build
+SESSION_SECRET='change-me-long-random-secret' COMPOSE_PUBLIC_PORT=15173 docker compose up -d --build
 ```
 
-`SESSION_SECRET` は compose でも必要です。未指定時は開発用デフォルト値が使われます。
+`SESSION_SECRET` は compose でも必須です。未指定なら起動を停止します。
+公開ポートは loopback (`127.0.0.1`) のみに bind するため、ローカル開発用途を前提にしています。
 
 疎通確認:
 
