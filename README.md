@@ -149,6 +149,37 @@ Notes:
 - ブラウザでの実運用確認や OneDrive OAuth は、HTTPS 終端された入口（Nginx / ingress / load balancer）配下で行ってください。
 - コンテナには `/api/health` を見る `HEALTHCHECK` を設定しています。
 
+### Docker Compose (app + redis + nginx HTTPS)
+
+`compose.yaml` で app / redis / nginx(https) を一括起動できます。
+
+```bash
+SESSION_SECRET='change-me-long-random-secret' docker compose up -d --build
+```
+
+`5173` が使用中の場合は公開ポートを変更できます。
+
+```bash
+SESSION_SECRET='change-me-long-random-secret' COMPOSE_PUBLIC_PORT=15173 docker compose up -d --build
+```
+
+`SESSION_SECRET` は compose でも必須です。未指定なら起動を停止します。
+公開ポートは loopback (`127.0.0.1`) のみに bind するため、ローカル開発用途を前提にしています。
+
+疎通確認:
+
+```bash
+curl -k https://localhost:${COMPOSE_PUBLIC_PORT:-5173}/api/health
+```
+
+`app` が non-root で動作していることの確認:
+
+```bash
+docker compose exec app id -u
+```
+
+`0` 以外であれば non-root 実行です。
+
 The containerized application can be deployed to any platform that supports Docker, including:
 
 - AWS ECS
