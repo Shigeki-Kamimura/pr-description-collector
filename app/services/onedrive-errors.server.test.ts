@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractOneDriveError, isOneDriveAuthLikeError } from "./onedrive-errors.server";
+import { extractOneDriveError, isOneDriveAuthLikeError, resolveOneDriveAuthStatus } from "./onedrive-errors.server";
 
 describe("onedrive-errors", () => {
   it("extractOneDriveError は message 末尾の request-id メタを除去する", () => {
@@ -30,5 +30,20 @@ describe("onedrive-errors", () => {
   it("isOneDriveAuthLikeError は token crypto エラーを認証エラー扱いしない", () => {
     const raw = "OneDrive token crypto encrypt failed: cipher failed";
     expect(isOneDriveAuthLikeError(raw)).toBe(false);
+  });
+
+  it("resolveOneDriveAuthStatus は code=AccessDenied を 403 に正規化する", () => {
+    const raw = "OneDrive API error (401) [code=AccessDenied]: forbidden";
+    expect(resolveOneDriveAuthStatus(raw, "AccessDenied")).toBe(403);
+  });
+
+  it("resolveOneDriveAuthStatus は code 不在でも (403) を優先して 403 にする", () => {
+    const raw = "OneDrive API error (403): forbidden";
+    expect(resolveOneDriveAuthStatus(raw, undefined)).toBe(403);
+  });
+
+  it("resolveOneDriveAuthStatus は 403 根拠がない場合 401 にする", () => {
+    const raw = "OneDrive API error (401): token expired";
+    expect(resolveOneDriveAuthStatus(raw, undefined)).toBe(401);
   });
 });

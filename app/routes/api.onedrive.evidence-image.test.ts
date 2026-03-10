@@ -157,6 +157,7 @@ describe("api.onedrive.evidence-image loader", () => {
   });
 
   it("権限不足は 403 を返す", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     onedrive.getBinary.mockRejectedValue(new OneDriveApiError("forbidden", 403, "accessDenied"));
     const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/a.png");
     const response = await loader({ request } as never);
@@ -164,6 +165,36 @@ describe("api.onedrive.evidence-image loader", () => {
 
     expect(response.status).toBe(403);
     expect(body).toBe("onedrive access denied");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "OneDrive evidence-image auth-like failure.",
+      expect.objectContaining({
+        event: "onedrive.auth-failure",
+        route: "api/onedrive/evidence-image",
+        status: 403,
+      }),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("OneDriveApiError の 401 は監査ログを出して 401 を返す", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onedrive.getBinary.mockRejectedValue(new OneDriveApiError("token expired", 401, "InvalidAuthenticationToken"));
+
+    const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/a.png");
+    const response = await loader({ request } as never);
+    const body = await response.text();
+
+    expect(response.status).toBe(401);
+    expect(body).toBe("onedrive auth required");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "OneDrive evidence-image auth-like failure.",
+      expect.objectContaining({
+        event: "onedrive.auth-failure",
+        route: "api/onedrive/evidence-image",
+        status: 401,
+      }),
+    );
+    warnSpy.mockRestore();
   });
 
   it("非画像 content-type は 415 を返す", async () => {
@@ -191,12 +222,23 @@ describe("api.onedrive.evidence-image loader", () => {
   });
 
   it("429 は Retry-After を返す", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     onedrive.getBinary.mockRejectedValue(new OneDriveApiError("throttled", 429, "activityLimitReached", 8));
     const request = buildEvidenceRequest("project/repo/PullRequests/PR1-test/imgs/a.png");
     const response = await loader({ request } as never);
 
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("8");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "OneDrive evidence-image rate limited.",
+      expect.objectContaining({
+        event: "onedrive.evidence-image-fetch-failed",
+        route: "api/onedrive/evidence-image",
+        status: 429,
+        failureType: "onedrive-rate-limit",
+      }),
+    );
+    warnSpy.mockRestore();
   });
 
   it("429 の Retry-After が日時形式でもそのまま返す", async () => {

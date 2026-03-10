@@ -33,3 +33,10 @@ export function isOneDriveAuthLikeError(rawMessage: string): boolean {
     message.includes("[code=accessdenied]")
   );
 }
+
+// auth-like エラーの HTTP ステータスを 401/403 に正規化する。
+export function resolveOneDriveAuthStatus(rawMessage: string, code?: string): 401 | 403 {
+  if (code?.toLowerCase() === "accessdenied") return 403;
+  if (/onedrive api error \(403\)/i.test(rawMessage)) return 403;
+  return 401;
+}

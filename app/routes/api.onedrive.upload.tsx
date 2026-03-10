@@ -14,7 +14,8 @@ import {
 } from "../services/github.server";
 import { getHttpStatus } from "../services/http-status";
 import { logger } from "../services/logger.server";
-import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { buildOneDriveAuditErrorPayload, sanitizeAuditPayload } from "../services/onedrive-audit-log.server";
+import { extractOneDriveError, isOneDriveAuthLikeError, resolveOneDriveAuthStatus } from "../services/onedrive-errors.server";
 import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
@@ -258,8 +259,12 @@ export async function action({ request }: ActionFunctionArgs) {
               evidenceDeleteFailureCount += 1;
               lastEvidenceDeleteFailureReason = reason.trim() || "unknown";
               logger.warn("OneDrive rollback image cleanup skipped.", {
-                imagePath,
-                reason,
+                ...sanitizeAuditPayload({
+                  event: "onedrive.rollback-image-cleanup-skipped",
+                  route: "api/onedrive/upload",
+                  imagePath,
+                  reason,
+                }),
               });
             }
           }
@@ -283,8 +288,12 @@ export async function action({ request }: ActionFunctionArgs) {
                 ? imagesFolderCleanupError.message
                 : String(imagesFolderCleanupError);
             logger.warn("OneDrive rollback images folder cleanup skipped.", {
-              folderPath,
-              reason,
+              ...sanitizeAuditPayload({
+                event: "onedrive.rollback-images-folder-cleanup-skipped",
+                route: "api/onedrive/upload",
+                folderPath,
+                reason,
+              }),
             });
           }
         }
@@ -300,8 +309,12 @@ export async function action({ request }: ActionFunctionArgs) {
               const reason = folderCleanupError instanceof Error ? folderCleanupError.message : String(folderCleanupError);
               rollbackFolderCleanup = `failed (${reason.trim() || "unknown"})`;
               logger.warn("OneDrive rollback folder cleanup skipped.", {
-                folderPath,
-                reason,
+                ...sanitizeAuditPayload({
+                  event: "onedrive.rollback-folder-cleanup-skipped",
+                  route: "api/onedrive/upload",
+                  folderPath,
+                  reason,
+                }),
               });
             }
           } catch (rollbackError) {
@@ -355,7 +368,13 @@ export async function action({ request }: ActionFunctionArgs) {
   } catch (error) {
     if (isOAuthSessionStoreUnavailableError(error)) {
       logger.error("OneDrive upload failed due to session store outage.", {
-        message: error.message,
+        ...buildOneDriveAuditErrorPayload({
+          event: "onedrive.session-store-unavailable",
+          route: "api/onedrive/upload",
+          error,
+          status: 503,
+          failureType: "session-store",
+        }),
       });
       return Response.json(
         {
@@ -429,6 +448,16 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     // OneDrive への保存処理中のエラーは、認証エラーかどうかに関わらず基本的には 502 として返す。ただし、認証エラーと判断できる場合は 401 とする。
     if (failureDomain === "internal") {
+      logger.error(
+        "OneDrive upload failed due to internal failure.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.internal-failure",
+          route: "api/onedrive/upload",
+          error,
+          status: 500,
+          failureType: "internal",
+        }),
+      );
       return Response.json(
         {
           ok: false,
@@ -455,18 +484,46 @@ export async function action({ request }: ActionFunctionArgs) {
         { status: 502 },
       );
     }
+    const authStatus = resolveOneDriveAuthStatus(rawMessage, parsed.code);
     const message = isAuthLike
-      ? "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
+      ? authStatus === 403
+        ? "OneDrive へのアクセスが拒否されました。権限を確認してください。"
+        : "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
       : "OneDrive への保存に失敗しました。しばらくしてから再実行してください。";
     // 認証エラーっぽい場合でも、エラーコードや詳細メッセージがない場合は定型の再認証メッセージを返す。これにより、OneDrive API のエラーレスポンスの形式が変わったり、予期しないエラーが発生した場合でも、ユーザーには再認証が必要な可能性があることを伝えることができる。
     if (!isAuthLike) {
-      logger.error("OneDrive upload failed.", {
-        message: rawMessage,
-        code: parsed.code,
-        detail: parsed.message,
-      });
+      logger.error(
+        "OneDrive upload failed.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.upload-failed",
+          route: "api/onedrive/upload",
+          error,
+          status: 502,
+          failureType: "onedrive-non-auth",
+          extra: {
+            code: parsed.code ?? null,
+            detail: parsed.message ?? null,
+          },
+        }),
+      );
+    } else {
+      // 認証系は障害ではなく再認証導線の対象なので warn で記録する。
+      logger.warn(
+        "OneDrive upload auth-like failure.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.auth-failure",
+          route: "api/onedrive/upload",
+          error,
+          status: authStatus,
+          failureType: "onedrive-auth",
+          extra: {
+            code: parsed.code ?? null,
+            detail: parsed.message ?? null,
+          },
+        }),
+      );
     }
-    const status = isAuthLike ? 401 : 502;
+    const status = isAuthLike ? authStatus : 502;
     return Response.json(
       {
         ok: false,

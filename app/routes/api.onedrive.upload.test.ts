@@ -272,6 +272,28 @@ describe("api.onedrive.upload action", () => {
     expect(body.errorMessage).toBeUndefined();
   });
 
+  it("OneDrive accessDenied は 403 / isAuthError=false で返す", async () => {
+    onedrive.getDriveInfo.mockRejectedValue(
+      new Error("OneDrive API error (403) [code=accessDenied]: insufficient privileges"),
+    );
+
+    const response = await action({ request: buildRequest() } as never);
+    const body = (await response.json()) as {
+      ok: false;
+      isAuthError: boolean;
+      error: string;
+      errorCode?: string;
+      errorMessage?: string;
+    };
+
+    expect(response.status).toBe(403);
+    expect(body.ok).toBe(false);
+    expect(body.isAuthError).toBe(false);
+    expect(body.error).toBe("OneDrive へのアクセスが拒否されました。権限を確認してください。");
+    expect(body.errorCode).toBeUndefined();
+    expect(body.errorMessage).toBeUndefined();
+  });
+
   it("Redis障害は503で返し、保存処理へ進まない", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     onedrive.getDriveInfo.mockRejectedValue(new OAuthSessionStoreUnavailableError("redis down"));

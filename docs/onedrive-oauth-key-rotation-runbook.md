@@ -37,6 +37,30 @@
 - ロールバック判断時は「OneDrive 再認証が必要になる可能性」を前提情報として扱う。
 - 必要なら影響時間帯を限定し、ユーザー告知を先行する。
 
+## 監査ログ運用（Issue #45）
+- 目的: 障害調査に必要な相関情報を残しつつ、token/secret/PII の露出を防ぐ。
+- 共通ログ項目:
+  - `event`（失敗種別）
+  - `route`（どの API で発生したか）
+  - `failureType`（`session-store` / `onedrive-auth` / `onedrive-non-auth` など）
+  - `status`（返却HTTPステータス）
+  - `errorName` / `code`
+  - `message` / `detail`（機微値は `[REDACTED]` へマスク）
+
+### 主要失敗パターンのログ例
+- 認証系（401/403）
+  - `event=onedrive.auth-failure`, `route=api/onedrive/upload`, `status=401`, `code=InvalidAuthenticationToken`
+- レート制限（429）
+  - `event=onedrive.evidence-image-fetch-failed`, `route=api/onedrive/evidence-image`, `status=429`
+- セッションストア障害（503）
+  - `event=onedrive.session-store-unavailable`, `failureType=session-store`, `status=503`
+- 復号失敗（fail-closed）
+  - `event=onedrive.invalid-session-token-discarded`, `route=onedrive-oauth-session`, `reason=decrypt-failed`, `sessionIdHash=<hash>`
+
+### 禁止事項
+- `accessToken` / `refreshToken` / `secret` / `authorization` の平文出力
+- sessionId の平文出力（`sessionIdHash` を使用）
+
 ## 意図的な全セッション失効が必要な場合
 1. `ONEDRIVE_TOKEN_ENCRYPTION_ALLOW_SESSION_INVALIDATION=true` を明示設定する。
 2. 失効の目的と実施時刻を運用記録に残す。

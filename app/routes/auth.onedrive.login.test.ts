@@ -30,7 +30,7 @@ describe("auth.onedrive.login loader", () => {
     vi.mocked(ensureOAuthSessionStoreAvailable).mockRejectedValue(
       new (class OAuthSessionStoreUnavailableError extends Error {
         constructor() {
-          super("redis down");
+          super("redis down token=super-secret-token");
           this.name = "OAuthSessionStoreUnavailableError";
         }
       })(),
@@ -43,6 +43,18 @@ describe("auth.onedrive.login loader", () => {
     expect(response.status).toBe(503);
     expect(body).toContain("OneDrive 認証基盤で一時障害");
     expect(errorSpy).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "OneDrive OAuth session store failed.",
+      expect.objectContaining({
+        message: expect.not.stringContaining("super-secret-token"),
+      }),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      "OneDrive OAuth session store failed.",
+      expect.objectContaining({
+        message: expect.stringContaining("[REDACTED]"),
+      }),
+    );
     errorSpy.mockRestore();
   });
 });

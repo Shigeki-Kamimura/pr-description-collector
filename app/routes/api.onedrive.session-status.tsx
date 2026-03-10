@@ -10,7 +10,8 @@
  */
 import type { LoaderFunctionArgs } from "react-router";
 import { logger } from "../services/logger.server";
-import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { buildOneDriveAuditErrorPayload } from "../services/onedrive-audit-log.server";
+import { extractOneDriveError, isOneDriveAuthLikeError, resolveOneDriveAuthStatus } from "../services/onedrive-errors.server";
 import { getAccessToken, isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { createOneDriveService } from "../services/onedrive.server";
@@ -49,7 +50,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   } catch (error) {
     if (isOAuthSessionStoreUnavailableError(error)) {
       logger.error("OneDrive session-status failed due to session store outage.", {
-        message: error.message,
+        ...buildOneDriveAuditErrorPayload({
+          event: "onedrive.session-store-unavailable",
+          route: "api/onedrive/session-status",
+          error,
+          status: 503,
+          failureType: "session-store",
+        }),
       });
       return Response.json(
         {
@@ -63,32 +70,54 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const rawMessage = error instanceof Error ? error.message : "Unknown error";
     const parsed = extractOneDriveError(rawMessage);
     const isAuthLike = isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage);
-
-    const hasDetail = Boolean(parsed.code || parsed.message);
+    const authStatus = resolveOneDriveAuthStatus(rawMessage, parsed.code);
     const message = isAuthLike
-      ? hasDetail
-        ? `${parsed.code ?? "UNKNOWN"}: ${parsed.message ?? rawMessage}`
+      ? authStatus === 403
+        ? "OneDrive へのアクセスが拒否されました。権限を確認してください。"
         : "OneDrive 認証が有効ではありません。Connect OneDrive から再認証してください。"
       : "OneDrive セッション確認に失敗しました。しばらくしてから再実行してください。";
-    if (!isAuthLike) {
-      // 認証エラーの可能性が低いエラーは、内部的な詳細をログに残す。
-      // これにより、ユーザーには定型のエラーメッセージのみを返しつつ、開発者は問題の診断に必要な情報を得られるようになる。
-      logger.error("OneDrive session-status failed.", {
-        message: rawMessage,
-        code: parsed.code,
-        detail: parsed.message,
-      });
+    if (isAuthLike) {
+      logger.warn(
+        "OneDrive session-status auth-like failure.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.auth-failure",
+          route: "api/onedrive/session-status",
+          error,
+          status: authStatus,
+          failureType: "onedrive-auth",
+          extra: {
+            code: parsed.code ?? null,
+            detail: parsed.message ?? null,
+          },
+        }),
+      );
+    } else {
+      logger.error(
+        "OneDrive session-status failed.",
+        buildOneDriveAuditErrorPayload({
+          event: "onedrive.session-status-failed",
+          route: "api/onedrive/session-status",
+          error,
+          status: 502,
+          failureType: "onedrive-non-auth",
+          extra: {
+            code: parsed.code ?? null,
+            detail: parsed.message ?? null,
+          },
+        }),
+      );
     }
 
     return Response.json(
       {
         ok: false,
         error: message,
-        isAuthError: isAuthLike,
+        isAuthError: isAuthLike && authStatus === 401,
         errorCode: isAuthLike ? parsed.code : undefined,
-        errorMessage: isAuthLike ? parsed.message ?? rawMessage : undefined,
+        // 詳細文は機微情報混入リスクがあるためレスポンスには載せない。
+        errorMessage: undefined,
       } satisfies ApiOneDriveSessionStatusResponse,
-      { status: isAuthLike ? 401 : 502 },
+      { status: isAuthLike ? authStatus : 502 },
     );
   }
 }
