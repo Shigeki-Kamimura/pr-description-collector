@@ -12,7 +12,7 @@ import { createGitHubServiceFromEnv, type PullRequestRef } from "../services/git
 import { logger } from "../services/logger.server";
 import { buildOneDriveAuditErrorPayload } from "../services/onedrive-audit-log.server";
 import { createOneDriveServiceFromEnv } from "../services/onedrive.server";
-import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { extractOneDriveError, isOneDriveAuthLikeError, resolveOneDriveAuthStatus } from "../services/onedrive-errors.server";
 import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { validatePrRefInput } from "../services/validation";
 import { verifyCsrfToken } from "../services/csrf.server";
@@ -446,7 +446,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     const isAuthLike = isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage);
     const parsed = extractOneDriveError(rawMessage);
-    const authStatus = parsed.code === "accessDenied" ? 403 : 401;
+    const authStatus = resolveOneDriveAuthStatus(rawMessage, parsed.code);
     const message = isAuthLike
       ? authStatus === 403
         ? "OneDrive へのアクセスが拒否されました。権限を確認してください。"

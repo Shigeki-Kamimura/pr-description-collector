@@ -15,7 +15,7 @@ import {
 import { getHttpStatus } from "../services/http-status";
 import { logger } from "../services/logger.server";
 import { buildOneDriveAuditErrorPayload, sanitizeAuditPayload } from "../services/onedrive-audit-log.server";
-import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { extractOneDriveError, isOneDriveAuthLikeError, resolveOneDriveAuthStatus } from "../services/onedrive-errors.server";
 import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
@@ -484,8 +484,9 @@ export async function action({ request }: ActionFunctionArgs) {
         { status: 502 },
       );
     }
+    const authStatus = resolveOneDriveAuthStatus(rawMessage, parsed.code);
     const message = isAuthLike
-      ? parsed.code === "accessDenied"
+      ? authStatus === 403
         ? "OneDrive へのアクセスが拒否されました。権限を確認してください。"
         : "OneDrive 認証が切れています。再認証してから保存をやり直してください。"
       : "OneDrive への保存に失敗しました。しばらくしてから再実行してください。";
@@ -513,7 +514,7 @@ export async function action({ request }: ActionFunctionArgs) {
           event: "onedrive.auth-failure",
           route: "api/onedrive/upload",
           error,
-          status: parsed.code === "accessDenied" ? 403 : 401,
+          status: authStatus,
           failureType: "onedrive-auth",
           extra: {
             code: parsed.code ?? null,
@@ -522,7 +523,7 @@ export async function action({ request }: ActionFunctionArgs) {
         }),
       );
     }
-    const status = isAuthLike ? (parsed.code === "accessDenied" ? 403 : 401) : 502;
+    const status = isAuthLike ? authStatus : 502;
     return Response.json(
       {
         ok: false,

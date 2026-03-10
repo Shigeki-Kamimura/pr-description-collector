@@ -11,7 +11,7 @@ import type { LoaderFunctionArgs } from "react-router";
 import { logger } from "../services/logger.server";
 import { buildOneDriveAuditErrorPayload } from "../services/onedrive-audit-log.server";
 import { createOneDriveServiceFromEnv, OneDriveApiError } from "../services/onedrive.server";
-import { extractOneDriveError, isOneDriveAuthLikeError } from "../services/onedrive-errors.server";
+import { extractOneDriveError, isOneDriveAuthLikeError, resolveOneDriveAuthStatus } from "../services/onedrive-errors.server";
 import { isOneDriveOAuthTokenMissingError } from "../services/onedrive-auth.server";
 import { isOAuthSessionStoreUnavailableError } from "../services/onedrive-oauth-session.server";
 import {
@@ -192,7 +192,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const isAuthLike = isOneDriveOAuthTokenMissingError(error) || isOneDriveAuthLikeError(rawMessage);
     if (isAuthLike) {
       const parsed = extractOneDriveError(rawMessage);
-      const status = parsed.code === "accessDenied" ? 403 : 401;
+      const status = resolveOneDriveAuthStatus(rawMessage, parsed.code);
       // auth-like でも accessDenied は 403 へ正規化して UI 側の分岐を安定させる。
       logger.warn(
         "OneDrive evidence-image auth-like failure.",
