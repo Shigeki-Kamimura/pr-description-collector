@@ -1,0 +1,66 @@
+services:
+  certgen:
+    image: alpine:3.20
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        apk add --no-cache openssl >/dev/null
+        mkdir -p /certs
+        if [ ! -f /certs/dev.crt ] || [ ! -f /certs/dev.key ]; then
+          openssl req -x509 -nodes -newkey rsa:2048 \
+            -keyout /certs/dev.key \
+            -out /certs/dev.crt \
+            -days 3650 \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+        fi
+    volumes:
+      - nginx-certs:/certs
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      SESSION_SECRET: ${SESSION_SECRET:-dev-compose-session-secret-change-me}
+      REDIS_URL: redis://redis:6379/0
+      ONEDRIVE_TRUST_X_FORWARDED_PROTO: "true"
+      ONEDRIVE_TRUSTED_PROXY_HOSTS: localhost:${COMPOSE_PUBLIC_PORT:-5173}
+    user: "node"
+    expose:
+      - "3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${COMPOSE_PUBLIC_PORT:-5173}:443"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - nginx-certs:/certs:ro
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
+      app:
+        condition: service_started
+
+volumes:
+  redis-data:
+  nginx-certs:
