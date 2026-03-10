@@ -133,10 +133,10 @@
    - OAuth の `state` およびブラウザ整合性確認用の短期値は、署名付き Secure Cookie で保持してよい。Redis 保存は必須としない。
    - CSRF 対策は署名付き Secure Cookie を用いた方式を維持してよく、Redis 保存は必須としない。
    - OneDrive OAuth を利用するすべての外部公開経路は HTTPS を必須とし、HTTP では認証フローを開始・完了させない。
-   - `SESSION_SECRET` は production で必須とし、Cookie 署名の信頼境界を維持する。
+   - `SESSION_SECRET` は production で必須とし、未設定時は起動を fail-fast で停止する。開発用途の固定デフォルト値フォールバックは非production環境に限定し、production で許可してはならない。
    - Redis に保存する OneDrive OAuth の `accessToken` / `refreshToken` を平文で保存してはならない。保存時はサーバー側で暗号化し、読み取り時に復号して利用する。
    - Redis 上の token 保存形式はバージョン識別子を先頭に含むこと（例: `v1.<keyVersion>.<iv>.<authTag>.<ciphertext>`）。未対応バージョンや不正形式は fail-closed で無効セッションとして扱う。
-   - token 暗号化鍵は鍵素材設定（`ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL` / `ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL`）から導出すること。これらが未設定の場合は `SESSION_SECRET` をデフォルト鍵素材として利用すること。
+   - token 暗号化鍵は鍵素材設定（`ONEDRIVE_TOKEN_ENCRYPTION_CURRENT_KEY_MATERIAL` / `ONEDRIVE_TOKEN_ENCRYPTION_PREVIOUS_KEY_MATERIAL`）から導出すること。これらが未設定の場合は `SESSION_SECRET` をデフォルト鍵素材として利用する。環境変数が定義済みで空文字（空白のみ含む）だった場合は設定ミスとして fail-fast で停止すること。
    - 鍵ローテーションは `current + previous(1世代)` を上限とする。`previous` は未設定可だが、複数世代（2世代以上）の同時サポートは要件外とする。
    - 新規保存時の暗号化は常に `current` 鍵を使用し、`previous` 鍵で新規暗号化してはならない。
    - 復号時の鍵選択は token 形式に応じて行うこと。5-segment 形式（例: `v1.<keyVersion>.<iv>.<authTag>.<ciphertext>`）では `keyVersion` に基づき `current` または `previous` のいずれか 1 つの鍵のみで復号を試行し、復号失敗または unknown key version の場合は fail-closed で無効セッション扱いとする。4-segment など旧形式 token は `current` → `previous` → legacy(sha256) の順で復号を試行し、いずれも復号不能な場合は fail-closed で無効セッション扱いとする。
